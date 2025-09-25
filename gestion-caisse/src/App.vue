@@ -1,9 +1,9 @@
 <template>
 <header class="top">
 <nav class="nav">
-<RouterLink to="./views/PercepteurView" :class="{active: $route.name==='PercepteurView'}">Percepteur</RouterLink>
-<RouterLink to="./views/ComptableView" :class="{active: $route.name==='ComptableView'}">Comptable</RouterLink>
-<RouterLink to="./views/ManagerView" :class="{active: $route.name==='ManagerView'}">Manager</RouterLink>
+<RouterLink to="/percepteur" :class="{active: $route.name==='percepteur'}">Percepteur</RouterLink>
+<RouterLink to="/comptable" :class="{active: $route.name==='comptable'}">Comptable</RouterLink>
+<RouterLink to="/manager" :class="{active: $route.name==='manager'}">Manager</RouterLink>
 </nav>
 </header>
 <main class="container">

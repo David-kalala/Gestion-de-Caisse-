@@ -1,7 +1,7 @@
 <template>
 <div class="grid">
 <div class="card">
-<h2>File d attente des approbations</h2>
+<h2>En attente des approbations</h2>
 <div class="table">
 <table>
 <thead><tr><th></th><th>Type</th><th>#</th><th>Résumé</th><th>Montant</th><th>Devise</th><th>Date</th></tr></thead>
