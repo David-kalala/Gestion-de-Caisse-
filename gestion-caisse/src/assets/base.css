@@ -1,0 +1,24 @@
+:root{--bg:#0f172a;--panel:#0b1220;--border:#1f2937;--txt:#e5e7eb;--muted:#94a3b8;--primary:#2563eb;--success:#16a34a;--danger:#dc2626}
+*{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);color:var(--txt);font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+.card{background:linear-gradient(180deg,#0f172a,#0b1220);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.grid{display:grid;gap:16px}
+.grid-2{grid-template-columns:1.1fr .9fr}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{font-size:12px;color:#cbd5e1}
+input,select,textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0a0f1a;color:var(--txt)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid var(--primary);background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
+.btn.secondary{background:transparent;color:#cbd5e1;border-color:#334155}
+.btn.success{background:var(--success);border-color:var(--success)}
+.btn.danger{background:var(--danger);border-color:var(--danger)}
+.table{overflow:auto;border:1px solid var(--border);border-radius:12px}
+th,td{padding:10px;border-bottom:1px solid var(--border);text-align:left;font-size:13px}
+th{position:sticky;top:0;background:#0a0f1a}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;border:1px solid transparent}
+.badge.SOUMIS{background:#0b3b88;border-color:#1d4ed8;color:#cfe0ff}
+.badge.APPROUVE{background:#083f26;border-color:#16a34a;color:#b5f3c8}
+.badge.REJETE{background:#4c0519;border-color:#dc2626;color:#fecdd3}
+.muted{color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.kpi{background:#0a0f1a;border:1px solid var(--border);padding:12px;border-radius:12px}
+.kpi strong{font-size:18px}
+.ticket{background:#fff;color:#111;padding:16px;border-radius:12px}
