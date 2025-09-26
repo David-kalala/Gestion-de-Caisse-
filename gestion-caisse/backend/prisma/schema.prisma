@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"          // passe à "postgresql" + url quand tu voudras
+  url      = env("DATABASE_URL")
+}
+
+enum Role   { PERCEPTEUR COMPTABLE MANAGER ADMIN }
+enum Statut { SOUMIS APPROUVE REJETE ANNULE }
+enum OpType { VERSEMENT RETRAIT }
+
+model AppUser {
+  id            String      @id @default(uuid())
+  name          String
+  email         String      @unique
+  passwordHash  String
+  role          Role        @default(PERCEPTEUR)
+  approved      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  operations    Operation[] @relation("CreatedOps")
+  adminEvents   AdminAudit[]
+  historyEvents History[]   @relation("HistoryActor")
+}
+
+model Operation {
+  id            String   @id @default(uuid())
+  type          OpType
+  statut        Statut   @default(SOUMIS)
+  devise        String   // "CDF", "USD"
+  montantCents  Int      // stocke en cents (pas de flottants)
+  dateValeur    DateTime
+  payeur        String?  // VERSEMENT
+  motif         String?  // VERSEMENT
+  benef         String?  // RETRAIT
+  objet         String?  // RETRAIT
+  mode          String?
+  createdById   String?
+  createdBy     AppUser? @relation("CreatedOps", fields: [createdById], references: [id])
+  createdAt     DateTime @default(now())
+  edited        Boolean  @default(false)
+  updatedAt     DateTime?
+  canceledAt    DateTime?
+  histories     History[] @relation("HistoryRef")
+}
+
+model History {
+  id        String   @id @default(uuid())
+  ts        DateTime @default(now())
+  actorId   String?
+  actor     AppUser? @relation("HistoryActor", fields: [actorId], references: [id])
+  action    String
+  refId     String?
+  ref       Operation? @relation("HistoryRef", fields: [refId], references: [id])
+  devise    String?
+  montantCents Int?
+  motif     String?
+  meta      Json?
+}
+
+model AdminAudit {
+  id        String   @id @default(uuid())
+  ts        DateTime @default(now())
+  actorId   String?
+  actor     AppUser? @relation(fields: [actorId], references: [id])
+  action    String
+  payload   Json?
+}
