@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 
 const AUTH_KEY  = 'gcaisse-auth-v1'
 const USERS_KEY = 'gcaisse-users-v1'
-const ADMIN_AUDIT_KEY = 'gcaisse-admin-audit-v1' // NEW
+const ADMIN_AUDIT_KEY = 'gcaisse-admin-audit-v1' 
 const load = (key, fallback) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback } catch { return fallback } }
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value))
 
@@ -19,7 +19,7 @@ export const useAuthStore = defineStore('auth', {
   state: () => ({
     current: load(AUTH_KEY, null),
     users: ensureAdmin(load(USERS_KEY, [])),
-    adminAudit: load(ADMIN_AUDIT_KEY, []), // NEW
+    adminAudit: load(ADMIN_AUDIT_KEY, []), 
   }),
   getters: {
     isAuthenticated: (s) => !!s.current,
@@ -27,12 +27,12 @@ export const useAuthStore = defineStore('auth', {
     role: (s) => s.current?.role || null,
     can: (s) => (roles) => roles.includes(s.current?.role),
     pendingUsers: (s) => s.users.filter(u => !u.approved),
-    adminHistory: (s) => [...s.adminAudit].reverse(), // NEW
+    adminHistory: (s) => [...s.adminAudit].reverse(), 
   },
   actions: {
     saveAll(){ save(AUTH_KEY, this.current); save(USERS_KEY, this.users); save(ADMIN_AUDIT_KEY, this.adminAudit) },
 
-    // NEW: journal immuable
+    // journal immuable
     logAdmin(action, payload){
       this.adminAudit.push({ id: 'A-'+Math.random().toString(36).slice(2,8), ts: new Date().toISOString(), actor: this.current?.email || 'system', action, payload })
       this.saveAll()
@@ -60,7 +60,7 @@ export const useAuthStore = defineStore('auth', {
       this.saveAll()
       this.logAdmin('APPROVE_USER', { userId:id, roleFrom: prevRole, roleTo: u.role }) // NEW
     },
-    // NEW: changement de rôle explicite
+    // changement de rôle explicite
     setRole(id, role){
       const u = this.users.find(x=>x.id===id); if(!u) throw new Error('Utilisateur introuvable')
       const prevRole = u.role
