@@ -1,7 +1,8 @@
 <template>
   <div class="grid grid-2">
     <div class="card">
-      <h2>Enregistrer un versement</h2>
+      <h2>{{ editingId ? 'Modifier un versement' : 'Enregistrer un versement' }}</h2>
+
       <form @submit.prevent="submit">
         <div class="row">
           <div>
@@ -36,15 +37,24 @@
             </select>
           </div>
           <div>
-            <label>Date (automatique)</label>
-            <!-- Lecture seule côté UI -->
-            <input type="date" :value="form.date" disabled>
+            <label>Date</label>
+            <input type="date" v-model="form.date" :disabled="!editingId">
           </div>
         </div>
 
-        <div style="margin-top:10px;display:flex;gap:10px">
-          <button class="btn" type="submit">Soumettre (Soumis)</button>
+        <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" type="submit">
+            {{ editingId ? 'Enregistrer les modifications' : 'Soumettre (Soumis)' }}
+          </button>
           <button class="btn secondary" type="button" @click="reset">Réinitialiser</button>
+
+          <!-- Annuler visible seulement en mode édition -->
+          <button
+            v-if="editingId"
+            class="btn danger"
+            type="button"
+            @click="cancelEditing()"
+          >Annuler ce versement</button>
         </div>
       </form>
 
@@ -59,14 +69,37 @@
           <thead>
             <tr>
               <th>#</th><th>Date</th><th>Payeur</th><th>Motif</th>
-              <th>Montant</th><th>Devise</th><th>Statut</th>
+              <th>Montant</th><th>Devise</th><th>Statut</th><th></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="v in store.versements" :key="v.id">
-              <td>{{ v.id }}</td><td>{{ v.date }}</td><td>{{ v.payeur }}</td><td>{{ v.motif }}</td>
-              <td>{{ store.fmt(v.montant) }}</td><td>{{ v.devise }}</td>
-              <td><span class="badge" :class="v.statut">{{ v.statut }}</span></td>
+              <td>{{ v.id }}</td>
+              <td>
+                {{ v.date }}
+                <div v-if="v.updatedAt" class="muted" style="font-size:12px">
+                  Modifié le {{ new Date(v.updatedAt).toLocaleString() }}
+                </div>
+                <div v-if="v.canceledAt" class="muted" style="font-size:12px">
+                  Annulé le {{ new Date(v.canceledAt).toLocaleString() }}
+                </div>
+              </td>
+              <td>{{ v.payeur }}</td>
+              <td>{{ v.motif }}</td>
+              <td>{{ store.fmt(v.montant) }}</td>
+              <td>{{ v.devise }}</td>
+              <td>
+                <span class="badge" :class="v.statut">{{ v.statut }}</span>
+                <span v-if="v.edited" class="badge MODIFIE" style="margin-bottom:10px">MODIFIÉ</span>
+              </td>
+              <td>
+                <!-- Bouton Modifier seulement si SOUMIS (Annuler est dans le formulaire d'édition) -->
+                <button
+                  class="btn secondary"
+                  v-if="v.statut==='SOUMIS'"
+                  @click="edit(v)"
+                >Modifier</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -76,13 +109,13 @@
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useCashStore } from '../stores/cashStore'
 import Ticket from '../components/Ticket.vue'
 
 const store = useCashStore()
+const editingId = ref(null)
 
-// La date est fixée au jour J dès l'init
 const form = reactive({
   montant: 500000,
   devise: 'CDF',
@@ -94,17 +127,41 @@ const form = reactive({
 
 const ticket = reactive({})
 
-// Forcer la date du jour à l'enregistrement (sécurité métier)
 function submit () {
-  const v = {
-    id: store.uid('V'),
-    ...form,
-    date: store.today(),     // <- force la date actuelle ici
-    statut: 'SOUMIS'
+  if (editingId.value) {
+    try {
+      store.updateVersement(editingId.value, { ...form })
+      Object.assign(ticket, { id: editingId.value, ...form, statut: 'SOUMIS' })
+      alert('Versement modifié.')
+      editingId.value = null
+      reset()
+    } catch (e) { alert(e.message) }
+  } else {
+    const v = { id: store.uid('V'), ...form, date: store.today(), statut: 'SOUMIS' }
+    store.addVersement(v)
+    Object.assign(ticket, v)
+    alert('Versement soumis.')
+    reset()
   }
-  store.addVersement(v)
-  Object.assign(ticket, v)
-  alert('Versement soumis.')
+}
+
+function edit (v) {
+  if (v.statut !== 'SOUMIS') { alert('Non modifiable (pas au statut SOUMIS).'); return }
+  editingId.value = v.id
+  Object.assign(form, { montant: v.montant, devise: v.devise, motif: v.motif, payeur: v.payeur, mode: v.mode, date: v.date })
+}
+
+function cancelEditing () {
+  const id = editingId.value
+  const row = store.versements.find(x => x.id === id)
+  if (!row) return
+  if (!confirm(`Annuler le versement ${row.id} ?`)) return
+  try {
+    store.cancelVersement(row.id)
+    editingId.value = null
+    reset()
+    alert('Versement annulé.')
+  } catch (e) { alert(e.message) }
 }
 
 function reset () {
@@ -113,6 +170,7 @@ function reset () {
   form.motif = 'Taxe d’importation'
   form.payeur = 'Société X'
   form.mode = 'Espèces'
-  form.date = store.today()  // <- réinitialise à aujourd’hui
+  form.date = store.today()
+  editingId.value = null
 }
 </script>

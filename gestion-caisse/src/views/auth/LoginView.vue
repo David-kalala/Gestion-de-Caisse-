@@ -1,7 +1,6 @@
 <template>
 <div class="card" style="max-width:480px;margin:40px auto">
 <h2>Connexion</h2>
-<p class="muted">Utilise par exemple <b>admin@caisse.local / admin</b> (ou crée un compte).</p>
 <form @submit.prevent="login">
 <div class="row">
 <div><label>Email</label><input v-model="email" type="email" required></div>

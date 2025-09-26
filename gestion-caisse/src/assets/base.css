@@ -22,3 +22,6 @@ th{position:sticky;top:0;background:#0a0f1a}
 .kpi{background:#0a0f1a;border:1px solid var(--border);padding:12px;border-radius:12px}
 .kpi strong{font-size:18px}
 .ticket{background:#fff;color:#111;padding:16px;border-radius:12px}
+.badge.ANNULE{ background:#111827; border-color:#776b80; color:#c01b89 }
+.badge.MODIFIE{ background:#1f2937; border-color:#505533; color:#edfd93 }
+
