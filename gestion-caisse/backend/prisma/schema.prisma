@@ -3,14 +3,28 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"          // passe à "postgresql" + url quand tu voudras
+  provider = "sqlite"          
   url      = env("DATABASE_URL")
 }
 
-enum Role   { PERCEPTEUR COMPTABLE MANAGER ADMIN }
-enum Statut { SOUMIS APPROUVE REJETE ANNULE }
-enum OpType { VERSEMENT RETRAIT }
+enum Role {
+  PERCEPTEUR
+  COMPTABLE
+  MANAGER
+  ADMIN
+}
 
+enum Statut {
+  SOUMIS
+  APPROUVE
+  REJETE
+  ANNULE
+}
+
+enum OpType {
+  VERSEMENT
+  RETRAIT
+}
 model AppUser {
   id            String      @id @default(uuid())
   name          String
