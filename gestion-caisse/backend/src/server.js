@@ -2,52 +2,87 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
 import { prisma } from './db.js'
 
 dotenv.config()
 const app = express()
-app.use(cors())
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization']
+}))
 app.use(express.json())
 
 // ---------- helpers
 const cents = n => Math.round(Number(n) * 100)
 const money = c => Math.round(c) / 100
 
-// ---------- auth (DEMO: sans JWT, à sécuriser plus tard)
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me'
+const signJwt = (u) => jwt.sign({ sub: u.id, role: u.role, approved: u.approved }, JWT_SECRET, { expiresIn: '8h' })
+const auth = (req, res, next) => {
+  const h = req.headers.authorization || ''
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null
+  if (!token) return res.status(401).json({ error: 'Authorization header manquant' })
+  try {
+    const payload = jwt.verify(token, JWT_SECRET)
+    req.user = { id: payload.sub, role: payload.role, approved: payload.approved }
+    next()
+  } catch (e) {
+    return res.status(401).json({ error: 'Token invalide ou expiré' })
+  }
+}
+
+// ---------- auth
 app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body
   const u = await prisma.appUser.findUnique({ where: { email } })
   if (!u || !(await bcrypt.compare(password, u.passwordHash))) {
     return res.status(401).json({ error: 'Identifiants invalides' })
   }
+  if (!u.approved) {
+    // on permet le login mais l'app front redirige vers /pending
+  }
+  const token = signJwt(u)
+  res.json({
+    token,
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, approved: u.approved }
+  })
+})
+
+app.get('/auth/me', auth, async (req, res) => {
+  const u = await prisma.appUser.findUnique({ where: { id: req.user.id } })
+  if (!u) return res.status(404).json({ error: 'Utilisateur introuvable' })
   res.json({ id: u.id, name: u.name, email: u.email, role: u.role, approved: u.approved })
 })
 
 // ---------- créer opération
-app.post('/operations', async (req, res) => {
+app.post('/operations', auth, async (req, res) => {
   try {
     const { type, devise, montant, date, payeur, motif, benef, objet, mode, createdById } = req.body
+    if (!req.user.approved) return res.status(403).json({ error: 'Compte non approuvé' })
+    if (createdById && createdById !== req.user.id) return res.status(403).json({ error: 'Actor mismatch' })
     const o = await prisma.operation.create({
       data: {
         type, devise, montantCents: cents(montant), dateValeur: new Date(date),
-        payeur, motif, benef, objet, mode, createdById
+        payeur, motif, benef, objet, mode, createdById: req.user.id
       }
     })
     await prisma.history.create({
-      data: { action: `ADD_${type}`, refId: o.id, devise: o.devise, montantCents: o.montantCents, motif: motif ?? objet, actorId: createdById }
+      data: { action: `ADD_${type}`, refId: o.id, devise: o.devise, montantCents: o.montantCents, motif: motif ?? objet, actorId: req.user.id }
     })
     res.json(o)
   } catch (e) { res.status(400).json({ error: e.message }) }
 })
 
 // ---------- éditer (seulement SOUMIS)
-app.patch('/operations/:id', async (req, res) => {
+app.patch('/operations/:id', auth, async (req, res) => {
   const { id } = req.params
   const o = await prisma.operation.findUnique({ where: { id } })
   if (!o) return res.status(404).json({ error: 'Not found' })
   if (o.statut !== 'SOUMIS') return res.status(400).json({ error: 'Non modifiable' })
 
-  const { devise, montant, date, payeur, motif, benef, objet, mode, actorId } = req.body
+  const { devise, montant, date, payeur, motif, benef, objet, mode } = req.body
   const updated = await prisma.operation.update({
     where: { id },
     data: {
@@ -64,15 +99,14 @@ app.patch('/operations/:id', async (req, res) => {
     }
   })
   await prisma.history.create({
-    data: { action: `UPDATE_${o.type}`, refId: id, devise: updated.devise, montantCents: updated.montantCents, motif: updated.motif ?? updated.objet, actorId, meta: { before: o, after: updated } }
+    data: { action: `UPDATE_${o.type}`, refId: id, devise: updated.devise, montantCents: updated.montantCents, motif: updated.motif ?? updated.objet, actorId: req.user.id, meta: { before: o, after: updated } }
   })
   res.json(updated)
 })
 
 // ---------- cancel (seulement SOUMIS)
-app.post('/operations/:id/cancel', async (req, res) => {
+app.post('/operations/:id/cancel', auth, async (req, res) => {
   const { id } = req.params
-  const { actorId } = req.body
   const o = await prisma.operation.findUnique({ where: { id } })
   if (!o) return res.status(404).json({ error: 'Not found' })
   if (o.statut !== 'SOUMIS') return res.status(400).json({ error: 'Non annulable' })
@@ -81,26 +115,29 @@ app.post('/operations/:id/cancel', async (req, res) => {
     where: { id }, data: { statut: 'ANNULE', canceledAt: new Date() }
   })
   await prisma.history.create({
-    data: { action: `CANCEL_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId }
+    data: { action: `CANCEL_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId: req.user.id }
   })
   res.json(updated)
 })
 
 // ---------- decision (APPROUVE / REJETE) par Manager
-app.post('/operations/:id/decide', async (req, res) => {
+app.post('/operations/:id/decide', auth, async (req, res) => {
+  if (req.user.role !== 'MANAGER' && req.user.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Réservé au Manager/Admin' })
+  }
   const { id } = req.params
-  const { decision, actorId } = req.body // 'APPROUVE' ou 'REJETE'
+  const { decision } = req.body // 'APPROUVE' ou 'REJETE'
   const o = await prisma.operation.findUnique({ where: { id } })
   if (!o) return res.status(404).json({ error: 'Not found' })
   const updated = await prisma.operation.update({ where: { id }, data: { statut: decision } })
   await prisma.history.create({
-    data: { action: `DECIDE_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId, meta: { statut: decision } }
+    data: { action: `DECIDE_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId: req.user.id, meta: { statut: decision } }
   })
   res.json(updated)
 })
 
 // ---------- listes
-app.get('/operations', async (req, res) => {
+app.get('/operations', auth, async (req, res) => {
   const { statut, type } = req.query
   const ops = await prisma.operation.findMany({
     where: { statut: statut ?? undefined, type: type ?? undefined },
@@ -115,14 +152,14 @@ app.get('/history', async (_req, res) => {
 })
 
 // ---------- KPI
-app.get('/kpi/totals', async (_req, res) => {
+app.get('/kpi/totals', auth, async (_req, res) => {
   const inSum = await prisma.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'VERSEMENT' } })
   const outSum = await prisma.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'RETRAIT' } })
   const i = inSum._sum.montantCents || 0, o = outSum._sum.montantCents || 0
   res.json({ inSum: money(i), outSum: money(o), solde: money(i - o) })
 })
 
-app.get('/kpi/totals-by-currency', async (_req, res) => {
+app.get('/kpi/totals-by-currency', auth, async (_req, res) => {
   const approved = await prisma.operation.groupBy({
     by: ['devise', 'type'],
     where: { statut: 'APPROUVE' },

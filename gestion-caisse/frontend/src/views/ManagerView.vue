@@ -17,7 +17,7 @@
               <td>{{ x.type }}</td>
               <td>{{ x.id }}</td>
               <td>{{ x.type==='VERSEMENT' ? (x.payeur + ' — ' + x.motif) : (x.benef + ' — ' + x.objet) }}</td>
-              <td>{{ store.fmt(x.montant) }}</td>
+               <td>{{ store.fmtCents(x.montantCents) }}</td>
               <td>{{ x.devise }}</td>
               <td>{{ x.date }}</td>
             </tr>
@@ -47,15 +47,15 @@
         <div class="kpis" style="margin-top:10px">
           <div class="kpi">
             <div class="muted">Entrées ({{ devise }})</div>
-            <strong>{{ store.fmt(totalsDev.inSum) }}</strong>
+            <strong>{{ store.fmtUnit(totalsDev.inSum) }}</strong>
           </div>
           <div class="kpi">
             <div class="muted">Sorties ({{ devise }})</div>
-            <strong>{{ store.fmt(totalsDev.outSum) }}</strong>
+            <strong>{{ store.fmtUnit(totalsDev.outSum) }}</strong>
           </div>
           <div class="kpi">
             <div class="muted">Solde ({{ devise }})</div>
-            <strong>{{ store.fmt(totalsDev.solde) }}</strong>
+            <strong>{{ store.fmtUnit(totalsDev.solde) }}</strong>
           </div>
         </div>
       </div>
@@ -79,7 +79,7 @@
           <td>{{ h.actor }}</td>
           <td>{{ h.action }}</td>
           <td>{{ h.ref }}</td>
-          <td>{{ store.fmt(h.montant) }}</td>
+          <td>{{ store.fmtUnit(h.montant) }}</td>
           <td>{{ h.devise }}</td>
          <td>{{ h.motif ?? h.meta?.motif ?? h.meta?.objet ?? '—' }}</td>
         </tr>
@@ -92,7 +92,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useCashStore } from '../stores/cashStore'
 
 const store = useCashStore()
@@ -115,4 +115,9 @@ watch(currencies, (list) => {
 
 /** Totaux de la devise sélectionnée */
 const totalsDev = computed(() => devise.value ? store.totalsByCurrency[devise.value] : null)
+onMounted(async () => {
+  try {
+    await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
+  } catch (e) { console.error(e) }
+})
 </script>

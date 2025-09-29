@@ -34,7 +34,7 @@
 <tbody>
 <tr v-for="r in store.retraits" :key="r.id">
 <td>{{ r.id }}</td><td>{{ r.date }}</td><td>{{ r.objet }}</td><td>{{ r.benef }}</td>
-<td>{{ store.fmt(r.montant) }}</td><td>{{ r.devise }}</td><td><span class="badge" :class="r.statut">{{ r.statut }}</span></td>
+<td>{{ store.fmtCents(r.montantCents) }}</td><td>{{ r.devise }}</td><td><span class="badge" :class="r.statut">{{ r.statut }}</span></td>
 </tr>
 </tbody>
 </table>
@@ -43,12 +43,24 @@
 </div>
 </template>
 <script setup>
-import { reactive } from 'vue'
+import { reactive, onMounted } from 'vue'
 import { useCashStore } from '../stores/cashStore'
 
 
 const store = useCashStore()
 const form = reactive({ montant:300000, devise:'CDF', objet:'Paiement facture fournisseur transport', benef:'Société Y', ref:'FCT-2025-009', date: store.today() })
-function submit(){ const r = { id: store.uid('R'), ...form, statut:'SOUMIS' }; store.addRetrait(r); alert('Retrait soumis.') }
+ function submit(){
+   const payload = {
+     montantCents: store.toCents(form.montant),
+     devise: form.devise, objet: form.objet, benef: form.benef, mode: 'N/A', date: form.date
+   }
+   store.addRetrait(payload); alert('Retrait soumis.')
+ }
 function reset(){ form.montant=300000; form.devise='CDF'; form.objet='Paiement facture fournisseur transport'; form.benef='Société Y'; form.ref='FCT-2025-009'; form.date=store.today() }
+onMounted(async () => {
+   try {
+     await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
+   } catch (e) { console.error(e) }
+ })
 </script>
+
