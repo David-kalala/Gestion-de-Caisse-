@@ -35,11 +35,11 @@ const router = useRouter(); const auth = useAuthStore()
 const name = ref(''); const email = ref(''); const password = ref(''); const role = ref('PERCEPTEUR')
 
 
-function signup(){
-try{
-   // placeholder: le backend ne fournit pas (encore) /auth/signup
-   alert('La création de compte n’est pas disponible sur cette démo API. Utilisez admin@caisse.local / admin.')
-   router.push({name:'login'})
- }catch(e){ alert(e.message) }
-}
+ async function signup(){
+   try{
+     await auth.signup({ name: name.value, email: email.value, password: password.value, role: role.value })
+     alert('Compte créé. En attente d’approbation par un Administrateur.')
+     router.push({ name:'pending' })
+   } catch(e){ alert(e.message) }
+ }
 </script>

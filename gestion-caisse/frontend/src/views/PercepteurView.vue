@@ -59,7 +59,7 @@
       </form>
 
       <h3 style="margin-top:16px">Ticket</h3>
-      <Ticket :data="ticket" :fmt="store.fmt" />
+      <Ticket :data="ticket" :fmt="(n)=>store.fmtUnit(n)" />
     </div>
 
     <div class="card">
@@ -128,26 +128,23 @@ const form = reactive({
 
 const ticket = reactive({})
 
-function submit () {
+async function submit  () {
   if (editingId.value) {
     try {
       const montantCents = store.toCents(form.montant)
-      store.updateVersement(editingId.value, { montantCents, devise: form.devise, motif: form.motif, payeur: form.payeur, mode: form.mode, date: form.date })
+      await store.updateVersement(editingId.value, { montantCents, devise: form.devise, motif: form.motif, payeur: form.payeur, mode: form.mode, date: form.date })
       Object.assign(ticket, { id: editingId.value, ...form, statut: 'SOUMIS' })
       alert('Versement modifié.')
       editingId.value = null
       reset()
     } catch (e) { alert(e.message) }
   } else {
-    const v = { id: store.uid('V'), ...form, date: store.today(), statut: 'SOUMIS' }
-    store.addVersement(v)
-    Object.assign(ticket, v)
     const payload = {
-       montantCents: store.toCents(form.montant),
-       devise: form.devise, motif: form.motif, payeur: form.payeur, mode: form.mode, date: store.today()
-     }
-     store.addVersement(payload)
-     Object.assign(ticket, { ...form, id: '—', statut: 'SOUMIS' })
+      montantCents: store.toCents(form.montant),
+      devise: form.devise, motif: form.motif, payeur: form.payeur, mode: form.mode, date: store.today()
+    }
+    await store.addVersement(payload)
+   Object.assign(ticket, { ...form, id: '—', statut: 'SOUMIS' })
     alert('Versement soumis.')
     reset()
   }
@@ -156,7 +153,7 @@ function submit () {
 function edit (v) {
   if (v.statut !== 'SOUMIS') { alert('Non modifiable (pas au statut SOUMIS).'); return }
   editingId.value = v.id
-  Object.assign(form, { montant: v.montant, devise: v.devise, motif: v.motif, payeur: v.payeur, mode: v.mode, date: v.date })
+  Object.assign(form, { montant: (v.montantCents ?? 0)/100, devise: v.devise, motif: v.motif, payeur: v.payeur, mode: v.mode, date: v.date })
 }
 
 function cancelEditing () {
@@ -188,4 +185,4 @@ onMounted(async () => {
    } catch (e) { console.error(e) }
  })
 </script>
-<td>{{ store.fmtCents(v.montantCents) }}</td>
+

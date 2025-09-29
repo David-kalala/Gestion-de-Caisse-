@@ -27,8 +27,12 @@
        return user
      },
      logout(){ this.session = null; this.save() },
-     // pas de signup tant que l’API n’expose pas /auth/signup
-     signup(){ throw new Error('Création de compte non implémentée côté API') },
+     async signup({ name, email, password, role }){
+       const { token, user } = await api.post('/auth/signup', { name, email, password, role })
+       this.session = { token, user }
+       this.save()
+       return user
+     },
      // /auth/me pour rafraîchir depuis le token si besoin
      async me(){
        const me = await api.get('/auth/me')

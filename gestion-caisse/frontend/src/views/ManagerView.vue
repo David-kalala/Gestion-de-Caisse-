@@ -76,7 +76,7 @@
       <tbody>
         <tr v-for="h in store.history" :key="h.id">
           <td>{{ new Date(h.ts).toLocaleString() }}</td>
-          <td>{{ h.actor }}</td>
+           <td>{{ h.actor || '—' }}</td>
           <td>{{ h.action }}</td>
           <td>{{ h.ref }}</td>
           <td>{{ store.fmtUnit(h.montant) }}</td>
@@ -105,7 +105,7 @@ function decide(decision){
 }
 
 /** Liste des devises présentes dans les totaux (approuvés) */
-const currencies = computed(() => Object.keys(store.totalsByCurrency))
+const currencies = computed(() => Object.keys(store.kpisByDev || {}))
 
 /** Devise sélectionnée (par défaut, la première dispo) */
 const devise = ref(null)
@@ -114,7 +114,7 @@ watch(currencies, (list) => {
 }, { immediate: true })
 
 /** Totaux de la devise sélectionnée */
-const totalsDev = computed(() => devise.value ? store.totalsByCurrency[devise.value] : null)
+const totalsDev = computed(() => devise.value ? store.kpisByDev[devise.value] : null)
 onMounted(async () => {
   try {
     await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])

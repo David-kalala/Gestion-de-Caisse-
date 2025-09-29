@@ -32,8 +32,39 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'Token invalide ou expiré' })
   }
 }
-
+const adminOnly = (req, res, next) => {
+  if (req.user?.role !== 'ADMIN') return res.status(403).json({ error: 'Réservé à l’Admin' })
+  next()
+}
 // ---------- auth
+
+
+app.post('/auth/signup', async (req, res) => {
+   try {
+     const { name, email, password, role } = req.body
+     if (!name || !email || !password) {
+       return res.status(400).json({ error: 'Nom, email et mot de passe requis' })
+     }
+     const exists = await prisma.appUser.findUnique({ where: { email } })
+     if (exists) return res.status(409).json({ error: 'Email déjà utilisé' })
+ 
+     const allowed = ['PERCEPTEUR', 'COMPTABLE', 'MANAGER'] // pas ADMIN à la création
+     const safeRole = allowed.includes(role) ? role : 'PERCEPTEUR'
+     const passwordHash = await bcrypt.hash(password, 10)
+ 
+     const u = await prisma.appUser.create({
+       data: { name, email, passwordHash, role: safeRole, approved: false }
+     })
+     const token = signJwt(u)
+     return res.status(201).json({
+       token,
+       user: { id: u.id, name: u.name, email: u.email, role: u.role, approved: u.approved }
+     })
+   } catch (e) {
+     return res.status(400).json({ error: e.message })
+   }
+ })
+
 app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body
   const u = await prisma.appUser.findUnique({ where: { email } })
@@ -55,6 +86,41 @@ app.get('/auth/me', auth, async (req, res) => {
   if (!u) return res.status(404).json({ error: 'Utilisateur introuvable' })
   res.json({ id: u.id, name: u.name, email: u.email, role: u.role, approved: u.approved })
 })
+
+ // ---------- ADMIN: users
+ app.get('/admin/users', auth, adminOnly, async (_req, res) => {
+   const users = await prisma.appUser.findMany({
+     orderBy: { createdAt: 'desc' },
+     select: { id: true, name: true, email: true, role: true, approved: true, createdAt: true }
+   })
+   res.json(users)
+ })
+ 
+ app.post('/admin/users/:id/approve', auth, adminOnly, async (req, res) => {
+   const { id } = req.params
+   const u = await prisma.appUser.update({ where: { id }, data: { approved: true } })
+   await prisma.adminAudit.create({ data: { actorId: req.user.id, action: 'APPROVE_USER', payload: { userId: id } } })
+   res.json({ ok: true, user: { id: u.id, approved: u.approved } })
+ })
+ 
+ app.post('/admin/users/:id/role', auth, adminOnly, async (req, res) => {
+   const { id } = req.params
+   const { role } = req.body || {}
+   const allowed = ['PERCEPTEUR', 'COMPTABLE', 'MANAGER', 'ADMIN']
+   if (!allowed.includes(role)) return res.status(400).json({ error: 'Rôle invalide' })
+   const u = await prisma.appUser.update({ where: { id }, data: { role } })
+   await prisma.adminAudit.create({ data: { actorId: req.user.id, action: 'SET_ROLE', payload: { userId: id, role } } })
+   res.json({ ok: true, user: { id: u.id, role: u.role } })
+ })
+ 
+ app.delete('/admin/users/:id', auth, adminOnly, async (req, res) => {
+   const { id } = req.params
+   if (id === req.user.id) return res.status(400).json({ error: 'Impossible de supprimer votre propre compte' })
+   await prisma.appUser.delete({ where: { id } })
+   await prisma.adminAudit.create({ data: { actorId: req.user.id, action: 'DELETE_USER', payload: { userId: id } } })
+   res.json({ ok: true })
+ })
+ 
 
 // ---------- créer opération
 app.post('/operations', auth, async (req, res) => {
