@@ -40,7 +40,7 @@ CREATE TABLE "History" (
     "devise" TEXT,
     "montantCents" INTEGER,
     "motif" TEXT,
-    "meta" JSONB,
+    "meta" TEXT,
     CONSTRAINT "History_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "AppUser" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "History_refId_fkey" FOREIGN KEY ("refId") REFERENCES "Operation" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
@@ -51,7 +51,7 @@ CREATE TABLE "AdminAudit" (
     "ts" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "actorId" TEXT,
     "action" TEXT NOT NULL,
-    "payload" JSONB,
+    "payload" TEXT,
     CONSTRAINT "AdminAudit_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "AppUser" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
