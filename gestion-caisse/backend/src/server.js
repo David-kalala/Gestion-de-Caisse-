@@ -103,6 +103,19 @@ app.get('/auth/me', auth, async (req, res) => {
    res.json({ ok: true, user: { id: u.id, approved: u.approved } })
  })
  
+const setRoleHandler = async (req, res) => {
+  const { id } = req.params
+  const { role } = req.body || {}
+  const allowed = ['PERCEPTEUR', 'COMPTABLE', 'MANAGER', 'ADMIN']
+  if (!allowed.includes(role)) return res.status(400).json({ error: 'Rôle invalide' })
+  const u = await prisma.appUser.update({ where: { id }, data: { role } })
+  await prisma.adminAudit.create({ data: { actorId: req.user.id, action: 'SET_ROLE', payload: { userId: id, role } } })
+  res.json({ ok: true, user: { id: u.id, role: u.role } })
+}
+app.post('/admin/users/:id/role', auth, adminOnly, setRoleHandler)
+app.patch('/admin/users/:id/role', auth, adminOnly, setRoleHandler)
+
+
  app.post('/admin/users/:id/role', auth, adminOnly, async (req, res) => {
    const { id } = req.params
    const { role } = req.body || {}
@@ -120,6 +133,23 @@ app.get('/auth/me', auth, async (req, res) => {
    await prisma.adminAudit.create({ data: { actorId: req.user.id, action: 'DELETE_USER', payload: { userId: id } } })
    res.json({ ok: true })
  })
+
+ // ---------- ADMIN: audit (journal des actions admin)
+app.get('/admin/audit', auth, adminOnly, async (_req, res) => {
+  const rows = await prisma.adminAudit.findMany({
+    orderBy: { ts: 'desc' },
+    take: 500,
+    include: { actor: true } // pour récupérer l'email de l'admin
+  })
+  res.json(rows.map(a => ({
+    id: a.id,
+    ts: a.ts,
+    actor: a.actor?.email || a.actorId,
+    action: a.action,
+    payload: a.payload
+  })))
+})
+
  
 
 // ---------- créer opération
