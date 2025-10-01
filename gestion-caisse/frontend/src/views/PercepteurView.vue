@@ -38,7 +38,8 @@
           </div>
           <div>
             <label>Date</label>
-            <input type="date" v-model="form.date" :disabled="!editingId">
+            <!-- Interdiction de modifier la date en mode édition -->
+            <input type="date" v-model="form.date" :disabled="editingId">
           </div>
         </div>
 
@@ -74,7 +75,7 @@
           </thead>
           <tbody>
             <tr v-for="v in store.versements" :key="v.id">
-              <td>{{ v.id }}</td>
+              <td>{{ v.reference || v.id }}</td>
               <td>
                 {{ v.date }}
                 <div v-if="v.updatedAt" class="muted" style="font-size:12px">
@@ -93,7 +94,6 @@
                 <span v-if="v.edited" class="badge MODIFIE" style="margin-bottom:10px">MODIFIÉ</span>
               </td>
               <td>
-                <!-- Bouton Modifier seulement si SOUMIS (Annuler est dans le formulaire d'édition) -->
                 <button
                   class="btn secondary"
                   v-if="v.statut==='SOUMIS'"
@@ -117,8 +117,8 @@ const store = useCashStore()
 const editingId = ref(null)
 
 const form = reactive({
-   // UI en unités, STORE/transport en centimes
-   montant: 500000, // unités
+  // UI en unités, STORE/transport en centimes
+  montant: 500000,
   devise: 'CDF',
   motif: 'Taxe d’importation',
   payeur: 'Société X',
@@ -132,19 +132,32 @@ async function submit  () {
   if (editingId.value) {
     try {
       const montantCents = store.toCents(form.montant)
-      await store.updateVersement(editingId.value, { montantCents, devise: form.devise, motif: form.motif, payeur: form.payeur, mode: form.mode, date: form.date })
-      Object.assign(ticket, { id: editingId.value, ...form, statut: 'SOUMIS' })
+      // Ne pas envoyer 'date' pour éviter toute modification côté serveur
+      await store.updateVersement(editingId.value, {
+        montantCents,
+        devise: form.devise,
+        motif: form.motif,
+        payeur: form.payeur,
+        mode: form.mode
+      })
+      const row = store.versements.find(x => x.id === editingId.value)
+      Object.assign(ticket, { id: (row?.reference || editingId.value), ...form, statut: 'SOUMIS' })
       alert('Versement modifié.')
       editingId.value = null
       reset()
     } catch (e) { alert(e.message) }
   } else {
+    if (!confirm('Confirmez-vous l’enregistrement de ce versement ?')) return
     const payload = {
       montantCents: store.toCents(form.montant),
-      devise: form.devise, motif: form.motif, payeur: form.payeur, mode: form.mode, date: store.today()
+      devise: form.devise,
+      motif: form.motif,
+      payeur: form.payeur,
+      mode: form.mode,
+      date: store.today()
     }
-    await store.addVersement(payload)
-   Object.assign(ticket, { ...form, id: '—', statut: 'SOUMIS' })
+    const o = await store.addVersement(payload)
+    Object.assign(ticket, { ...form, id: (o.reference || o.id), statut: 'SOUMIS' })
     alert('Versement soumis.')
     reset()
   }
@@ -153,14 +166,21 @@ async function submit  () {
 function edit (v) {
   if (v.statut !== 'SOUMIS') { alert('Non modifiable (pas au statut SOUMIS).'); return }
   editingId.value = v.id
-  Object.assign(form, { montant: (v.montantCents ?? 0)/100, devise: v.devise, motif: v.motif, payeur: v.payeur, mode: v.mode, date: v.date })
+  Object.assign(form, {
+    montant: (v.montantCents ?? 0)/100,
+    devise: v.devise,
+    motif: v.motif,
+    payeur: v.payeur,
+    mode: v.mode,
+    date: v.date // visible mais disabled
+  })
 }
 
 function cancelEditing () {
   const id = editingId.value
   const row = store.versements.find(x => x.id === id)
   if (!row) return
-  if (!confirm(`Annuler le versement ${row.id} ?`)) return
+  if (!confirm(`Annuler le versement ${row.reference || row.id} ?`)) return
   try {
     store.cancelVersement(row.id)
     editingId.value = null
@@ -180,9 +200,8 @@ function reset () {
 }
 
 onMounted(async () => {
-   try {
-     await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
-   } catch (e) { console.error(e) }
- })
+  try {
+    await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
+  } catch (e) { console.error(e) }
+})
 </script>
-
