@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"          
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -25,6 +25,7 @@ enum OpType {
   VERSEMENT
   RETRAIT
 }
+
 model AppUser {
   id            String      @id @default(uuid())
   name          String
@@ -39,45 +40,49 @@ model AppUser {
 }
 
 model Operation {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   type          OpType
-  statut        Statut   @default(SOUMIS)
-  devise        String   // "CDF", "USD"
-  montantCents  Int      // stocke en cents (pas de flottants)
+  statut        Statut    @default(SOUMIS)
+  devise        String    // "CDF", "USD"
+  montantCents  Int       // stocke en cents (pas de flottants)
   dateValeur    DateTime
-  payeur        String?  // VERSEMENT
-  motif         String?  // VERSEMENT
-  benef         String?  // RETRAIT
-  objet         String?  // RETRAIT
+  payeur        String?   // VERSEMENT
+  motif         String?   // VERSEMENT
+  benef         String?   // RETRAIT
+  objet         String?   // RETRAIT
   mode          String?
+  reference     String?   @unique  // Référence lisible, générée pour RETRAIT
   createdById   String?
-  createdBy     AppUser? @relation("CreatedOps", fields: [createdById], references: [id])
-  createdAt     DateTime @default(now())
-  edited        Boolean  @default(false)
+  createdBy     AppUser?  @relation("CreatedOps", fields: [createdById], references: [id])
+  createdAt     DateTime  @default(now())
+  edited        Boolean   @default(false)
   updatedAt     DateTime?
   canceledAt    DateTime?
   histories     History[] @relation("HistoryRef")
+
+  @@index([statut, type, dateValeur])
+  @@index([createdById])
 }
 
 model History {
-  id        String   @id @default(uuid())
-  ts        DateTime @default(now())
-  actorId   String?
-  actor     AppUser? @relation("HistoryActor", fields: [actorId], references: [id])
-  action    String
-  refId     String?
-  ref       Operation? @relation("HistoryRef", fields: [refId], references: [id])
-  devise    String?
+  id           String   @id @default(uuid())
+  ts           DateTime @default(now())
+  actorId      String?
+  actor        AppUser? @relation("HistoryActor", fields: [actorId], references: [id])
+  action       String
+  refId        String?
+  ref          Operation? @relation("HistoryRef", fields: [refId], references: [id])
+  devise       String?
   montantCents Int?
-  motif     String?
-  meta      Json?
+  motif        String?
+  meta         Json?
 }
 
 model AdminAudit {
-  id        String   @id @default(uuid())
-  ts        DateTime @default(now())
-  actorId   String?
-  actor     AppUser? @relation(fields: [actorId], references: [id])
-  action    String
-  payload   Json?
+  id      String   @id @default(uuid())
+  ts      DateTime @default(now())
+  actorId String?
+  actor   AppUser? @relation(fields: [actorId], references: [id])
+  action  String
+  payload Json?
 }

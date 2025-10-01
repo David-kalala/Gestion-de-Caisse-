@@ -30,6 +30,10 @@ CREATE TABLE "Operation" (
     CONSTRAINT "Operation_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "AppUser" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
+-- Add 'reference' to Operation and make it unique (SQLite allows multiple NULLs)
+ALTER TABLE "Operation" ADD COLUMN "reference" TEXT;
+CREATE UNIQUE INDEX "Operation_reference_key" ON "Operation"("reference");
+
 -- CreateTable
 CREATE TABLE "History" (
     "id" TEXT NOT NULL PRIMARY KEY,
