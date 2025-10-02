@@ -11,6 +11,7 @@ import AdminView from './views/admin/AdminView.vue'
 import ManagerDashboard from './views/manager/ManagerDashboard.vue'
 import ManagerLayout from './views/manager/ManagerLayout.vue'
 import ManagerApprovals from './views/manager/ManagerApprovals.vue'
+import ManagerHistory from './views/manager/ManagerHistory.vue'
 
 
 const routes = [
@@ -32,7 +33,8 @@ const routes = [
   meta:{ requiresAuth:true, roles:['MANAGER'] },
   children: [
     { name: 'manager-dashboard', path: '', component: ManagerDashboard },
-    { name: 'manager-approvals', path: 'approvals', component: ManagerApprovals }
+    { name: 'manager-approvals', path: 'approvals', component: ManagerApprovals },
+    { name: 'manager-history', path: 'history', component: ManagerHistory }
   ]
 },
 ]

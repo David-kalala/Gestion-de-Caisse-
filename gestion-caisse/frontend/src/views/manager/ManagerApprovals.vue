@@ -90,33 +90,6 @@
         <button class="btn secondary" @click="reloadAll()">Actualiser</button>
       </div>
     </div>
-
-    <!-- Historique -->
-    <div class="card">
-      <h3>Historique des opérations</h3>
-      <div class="table" v-if="store.history.length">
-        <table>
-          <thead>
-            <tr>
-              <th>Date/Heure</th><th>Auteur</th><th>Action</th><th>Réf</th>
-              <th>Montant</th><th>Devise</th><th>Motif</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="h in store.history" :key="h.id">
-              <td>{{ new Date(h.ts).toLocaleString() }}</td>
-              <td>{{ h.actor || '—' }}</td>
-              <td>{{ h.action }}</td>
-              <td>{{ h.ref }}</td>
-              <td>{{ store.fmtUnit(h.montant) }}</td>
-              <td>{{ h.devise }}</td>
-              <td>{{ h.motif ?? h.meta?.motif ?? h.meta?.objet ?? '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p v-else class="muted">—</p>
-    </div>
   </div>
 </template>
 
@@ -170,21 +143,25 @@ async function loadR () {
 }
 
 async function reloadAll () {
-  await Promise.all([loadV(), loadR(), store.loadHistory()])
+  await Promise.all([loadV(), loadR()])
 }
 
 async function decide (decision) {
-  const items = [...selectedV.value, ...selectedR.value]
-  if (!items.length) { alert('Sélectionnez au moins un élément.'); return }
+  const picked = [...selectedV.value, ...selectedR.value]
+  if (!picked.length) { alert('Sélectionnez au moins un élément.'); return }
   try {
-    await store.decide(items, decision)  // recharge aussi KPIs/History/Operations
-    // Si la décision a vidé la page courante, on recule d'une page si besoin
-    if ((pageV.value - 1) * pageSizeV.value >= Math.max(0, totalV.value - items.filter(x => x.type==='VERSEMENT').length)) {
-      pageV.value = Math.max(1, pageV.value - 1)
-    }
-    if ((pageR.value - 1) * pageSizeR.value >= Math.max(0, totalR.value - items.filter(x => x.type==='RETRAIT').length)) {
-      pageR.value = Math.max(1, pageR.value - 1)
-    }
+    // On retient combien on va potentiellement retirer de chaque liste
+    const removedV = picked.filter(x => x.type === 'VERSEMENT').length
+    const removedR = picked.filter(x => x.type === 'RETRAIT').length
+
+    await store.decide(picked, decision) // recharge aussi les opérations/kpis côté store
+
+    // Si la page devient vide après retrait des éléments, reculer d'une page
+    const nextTotalV = Math.max(0, totalV.value - removedV)
+    const nextTotalR = Math.max(0, totalR.value - removedR)
+    if ((pageV.value - 1) * pageSizeV.value >= nextTotalV && pageV.value > 1) pageV.value--
+    if ((pageR.value - 1) * pageSizeR.value >= nextTotalR && pageR.value > 1) pageR.value--
+
     await reloadAll()
   } catch (e) {
     alert(e?.message || 'Erreur lors de la décision')

@@ -315,13 +315,19 @@ app.get('/ops/search', auth, async (req, res) => {
     dateFrom, dateTo,
     min, max,         // montants en unités
     sortBy = 'createdAt', order = 'desc',
-    page = '1', pageSize = '20'
+    page = '1', pageSize = '20',
+    createdBy, createdById
   } = req.query
+  // createdBy: 'me' ou createdById: <uuid>
+  const creator =
+    createdBy === 'me' ? req.user.id :
+    (createdById ? String(createdById) : null)
 
   const where = {
     ...(statut ? { statut } : {}),
     ...(type ? { type } : {}),
     ...(devise ? { devise } : {}),
+    ...(creator ? { createdById: creator } : {}),
     ...(dateFrom ? { dateValeur: { gte: new Date(dateFrom) } } : {}),
     ...(dateTo   ? { dateValeur: { lte: new Date(dateTo) } } : {}),
     ...(min != null || max != null ? {
@@ -384,6 +390,54 @@ app.get('/history', auth, async (_req, res) => {
     meta: h.meta
   })))
 })
+ // /history/search?kind=VERSEMENT|RETRAIT (ou vide pour tous) &page=1&pageSize=20
+ app.get('/history/search', auth, async (req, res) => {
+  const { kind = '', page = '1', pageSize = '20', q = '' } = req.query
+  const where = {
+    ...(kind === 'VERSEMENT' ? { action: { contains: 'VERSEMENT' } } : {}),
+    ...(kind === 'RETRAIT'   ? { action: { contains: 'RETRAIT'   } } : {}),
+    ...(q ? {
+      OR: [
+        // motif stocké directement sur History
+        { motif: { contains: q, mode: 'insensitive' } },
+        // champs de l'opération liée (réf lisible, payeur, bénéficiaire, motif/objet)
+        { ref: { is: { reference: { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { payeur:    { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { benef:     { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { motif:     { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { objet:     { contains: q, mode: 'insensitive' } } } }
+      ]
+    } : {})
+  }
+   const take = Math.min(Math.max(parseInt(pageSize,10) || 20, 1), 200)
+   const skip = (Math.max(parseInt(page,10) || 1, 1) - 1) * take
+   const [total, rows] = await Promise.all([
+   prisma.history.count({ where }),
+    prisma.history.findMany({
+      where,
+      orderBy: { ts: 'desc' },
+      skip, take,
+      include: { actor: true, ref: true } // <-- on récupère l'Operation liée
+    }),  
+   ])
+   const money = c => Number(c) / 100
+   res.json({
+     total, page: Number(page), pageSize: take,
+     items: rows.map(h => ({
+       id: h.id,
+       ts: h.ts,
+       actor: h.actor?.email || h.actorId,
+       action: h.action,
+       ref: h.refId,
+       // Affiche la référence lisible si présente, sinon l'UUID
+      ref: h.ref?.reference || h.refId,
+       devise: h.devise,
+       montant: h.montantCents != null ? money(h.montantCents) : null,
+       motif: h.motif,
+       meta: h.meta
+     }))
+   })
+ })
 
 // ---------- KPI
 app.get('/kpi/totals', auth, async (_req, res) => {

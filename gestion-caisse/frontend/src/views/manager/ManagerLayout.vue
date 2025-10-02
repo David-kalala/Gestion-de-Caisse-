@@ -4,6 +4,7 @@
       <nav style="display:flex; gap:8px; flex-wrap:wrap">
         <RouterLink :class="['tab', $route.name==='manager-dashboard' && 'active']" :to="{name:'manager-dashboard'}">📊 Dashboard</RouterLink>
         <RouterLink :class="['tab', $route.name==='manager-approvals' && 'active']" :to="{name:'manager-approvals'}">✅ Demandes à traiter</RouterLink>
+        <RouterLink :class="['tab', $route.name==='manager-history' && 'active']" :to="{name:'manager-history'}">🕘 Historique</RouterLink>
       </nav>
     </div>
     <RouterView />

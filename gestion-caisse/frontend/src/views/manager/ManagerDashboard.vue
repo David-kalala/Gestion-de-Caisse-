@@ -150,6 +150,7 @@ import {
   CategoryScale, LinearScale
 } from 'chart.js'
 import { api } from '../../lib/api' // chemin depuis /views/manager
+import { useDebouncedWatch } from '../../lib/useDebouncedWatch'
 
 ChartJS.register(
   Title, Tooltip, Legend,
@@ -258,6 +259,8 @@ const pieOpts = { plugins: { legend: { position: 'bottom' } } }
 const lineOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
 
 onMounted(loadAll)
+// Recherche debounced sur q
+useDebouncedWatch(q, () => { page.value = 1; loadList() }, 300)
 </script>
 
 <style scoped>
