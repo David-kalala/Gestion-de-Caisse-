@@ -13,7 +13,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="x in versementsPending" :key="x.id">
+              <tr v-for="x in itemsV" :key="x.id">
                 <td><input type="checkbox" v-model="selectedV" :value="{type:'VERSEMENT',id:x.id}"></td>
                 <td>{{ x.reference || x.id }}</td>
                 <td>{{ x.payeur }} — {{ x.motif }}</td>
@@ -23,6 +23,21 @@
               </tr>
             </tbody>
           </table>
+        </div>
+        <p class="muted" style="margin-top:8px">
+          Page {{ pageV }} / {{ Math.max(1, Math.ceil(totalV/pageSizeV)) }}
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn secondary" :disabled="pageV<=1" @click="pageV--; loadV()">Précédent</button>
+          <button class="btn secondary" :disabled="pageV>=Math.ceil(totalV/pageSizeV)" @click="pageV++; loadV()">Suivant</button>
+          <label style="margin-left:auto">
+            Taille page
+            <select v-model.number="pageSizeV" @change="pageV=1; loadV()">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+          </label>
         </div>
       </div>
 
@@ -38,7 +53,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="x in retraitsPending" :key="x.id">
+              <tr v-for="x in itemsR" :key="x.id">
                 <td><input type="checkbox" v-model="selectedR" :value="{type:'RETRAIT',id:x.id}"></td>
                 <td>{{ x.reference || x.id }}</td>
                 <td>{{ x.benef }} — {{ x.objet }}</td>
@@ -49,21 +64,37 @@
             </tbody>
           </table>
         </div>
+        <p class="muted" style="margin-top:8px">
+          Page {{ pageR }} / {{ Math.max(1, Math.ceil(totalR/pageSizeR)) }}
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn secondary" :disabled="pageR<=1" @click="pageR--; loadR()">Précédent</button>
+          <button class="btn secondary" :disabled="pageR>=Math.ceil(totalR/pageSizeR)" @click="pageR++; loadR()">Suivant</button>
+          <label style="margin-left:auto">
+            Taille page
+            <select v-model.number="pageSizeR" @change="pageR=1; loadR()">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+          </label>
+        </div>
       </div>
     </div>
 
     <!-- Actions -->
     <div class="card">
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn success" @click="decide('APPROUVE')">Approuver</button>
         <button class="btn danger"  @click="decide('REJETE')">Rejeter</button>
+        <button class="btn secondary" @click="reloadAll()">Actualiser</button>
       </div>
     </div>
 
     <!-- Historique -->
     <div class="card">
       <h3>Historique des opérations</h3>
-      <div class="table">
+      <div class="table" v-if="store.history.length">
         <table>
           <thead>
             <tr>
@@ -84,33 +115,81 @@
           </tbody>
         </table>
       </div>
+      <p v-else class="muted">—</p>
     </div>
-
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useCashStore } from '../../stores/cashStore'
+import { api } from '../../lib/api'
 
 const store = useCashStore()
+
+// Sélections
 const selectedV = ref([])
 const selectedR = ref([])
 
-function decide (decision) {
-  const items = [...selectedV.value, ...selectedR.value]
-  if (!items.length) { alert('Sélectionnez au moins un élément.'); return }
-  store.decide(items, decision)
+// Versements en attente (paginés)
+const itemsV = ref([])
+const totalV = ref(0)
+const pageV = ref(1)
+const pageSizeV = ref(10)
+
+// Retraits en attente (paginés)
+const itemsR = ref([])
+const totalR = ref(0)
+const pageR = ref(1)
+const pageSizeR = ref(10)
+
+async function loadV () {
+  const params = new URLSearchParams({
+    statut: 'SOUMIS',
+    type: 'VERSEMENT',
+    page: String(pageV.value),
+    pageSize: String(pageSizeV.value)
+  })
+  const data = await api.get('/ops/search?' + params.toString())
+  itemsV.value = data.items
+  totalV.value = data.total
   selectedV.value = []
+}
+
+async function loadR () {
+  const params = new URLSearchParams({
+    statut: 'SOUMIS',
+    type: 'RETRAIT',
+    page: String(pageR.value),
+    pageSize: String(pageSizeR.value)
+  })
+  const data = await api.get('/ops/search?' + params.toString())
+  itemsR.value = data.items
+  totalR.value = data.total
   selectedR.value = []
 }
 
-const versementsPending = computed(() => store.versements.filter(v => v.statut === 'SOUMIS'))
-const retraitsPending   = computed(() => store.retraits.filter(r => r.statut === 'SOUMIS'))
+async function reloadAll () {
+  await Promise.all([loadV(), loadR(), store.loadHistory()])
+}
 
-onMounted(async () => {
+async function decide (decision) {
+  const items = [...selectedV.value, ...selectedR.value]
+  if (!items.length) { alert('Sélectionnez au moins un élément.'); return }
   try {
-    await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
-  } catch (e) { console.error(e) }
-})
+    await store.decide(items, decision)  // recharge aussi KPIs/History/Operations
+    // Si la décision a vidé la page courante, on recule d'une page si besoin
+    if ((pageV.value - 1) * pageSizeV.value >= Math.max(0, totalV.value - items.filter(x => x.type==='VERSEMENT').length)) {
+      pageV.value = Math.max(1, pageV.value - 1)
+    }
+    if ((pageR.value - 1) * pageSizeR.value >= Math.max(0, totalR.value - items.filter(x => x.type==='RETRAIT').length)) {
+      pageR.value = Math.max(1, pageR.value - 1)
+    }
+    await reloadAll()
+  } catch (e) {
+    alert(e?.message || 'Erreur lors de la décision')
+  }
+}
+
+onMounted(reloadAll)
 </script>
