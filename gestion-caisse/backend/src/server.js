@@ -264,7 +264,7 @@ app.post('/operations/:id/decide', auth, async (req, res) => {
   res.json(updated)
 })
 
-// ---------- listes
+// ---------- listes (legacy pour les écrans existants)
 app.get('/operations', auth, async (req, res) => {
   const { statut, type } = req.query
   const ops = await prisma.operation.findMany({
@@ -274,9 +274,66 @@ app.get('/operations', auth, async (req, res) => {
   res.json(ops.map(o => ({
     ...o,
     date: o.dateValeur.toISOString().slice(0, 10), // alias pour le front
-    montant: money(o.montantCents)
+    montant: Number(o.montantCents) / 100
   })))
 })
+
+// ---------- recherche paginée + filtres avancés (pour Dashboard Manager)
+app.get('/ops/search', auth, async (req, res) => {
+  const {
+    statut, type, devise, q,
+    dateFrom, dateTo,
+    min, max,         // montants en unités
+    sortBy = 'createdAt', order = 'desc',
+    page = '1', pageSize = '20'
+  } = req.query
+
+  const where = {
+    ...(statut ? { statut } : {}),
+    ...(type ? { type } : {}),
+    ...(devise ? { devise } : {}),
+    ...(dateFrom ? { dateValeur: { gte: new Date(dateFrom) } } : {}),
+    ...(dateTo   ? { dateValeur: { lte: new Date(dateTo) } } : {}),
+    ...(min != null || max != null ? {
+      montantCents: {
+        ...(min != null ? { gte: Math.round(Number(min)*100) } : {}),
+        ...(max != null ? { lte: Math.round(Number(max)*100) } : {})
+      }
+    } : {}),
+    ...(q ? {
+      OR: [
+        { reference: { contains: q, mode: 'insensitive' } },
+        { payeur:    { contains: q, mode: 'insensitive' } },
+        { motif:     { contains: q, mode: 'insensitive' } },
+        { benef:     { contains: q, mode: 'insensitive' } },
+        { objet:     { contains: q, mode: 'insensitive' } }
+      ]
+    } : {})
+  }
+
+  const take = Math.min(Math.max(parseInt(pageSize,10) || 20, 1), 200)
+  const skip = (Math.max(parseInt(page,10) || 1, 1) - 1) * take
+
+  const [total, items] = await Promise.all([
+    prisma.operation.count({ where }),
+    prisma.operation.findMany({
+      where,
+      orderBy: { [sortBy]: order.toLowerCase() === 'asc' ? 'asc' : 'desc' },
+      skip, take
+    })
+  ])
+
+  res.json({
+    total, page: Number(page), pageSize: take,
+    items: items.map(o => ({
+      ...o,
+      date: o.dateValeur.toISOString().slice(0,10),
+      montant: Number(o.montantCents)/100
+    }))
+  })
+})
+
+
 
 // ---------- history (protégé)
 app.get('/history', auth, async (_req, res) => {
@@ -327,6 +384,63 @@ app.get('/kpi/totals-by-currency', auth, async (_req, res) => {
   })
   res.json(map)
 })
+
+// /kpi/daily?days=90&devise=CDF,USD
+app.get('/kpi/daily', auth, async (req, res) => {
+  const days = Math.max(1, Math.min(parseInt(req.query.days||'90',10), 365))
+  const devises = (req.query.devise || 'CDF,USD').split(',').map(s=>s.trim().toUpperCase())
+
+  const since = new Date(Date.now() - days*86400000)
+  // SQLite: GROUP BY DATE()
+  const rows = await prisma.$queryRaw`
+    SELECT DATE(dateValeur) as d, type, devise, SUM(montantCents) as s
+    FROM Operation
+    WHERE statut='APPROUVE' AND dateValeur >= ${since.toISOString()}
+      AND devise IN (${prisma.join(devises)})
+    GROUP BY d, type, devise
+    ORDER BY d ASC
+  `
+  // structure { date, CDF:{in,out}, USD:{in,out} }
+  const map = new Map()
+  for (const r of rows) {
+    const key = r.d
+    if (!map.has(key)) map.set(key, { date: key })
+    const slot = map.get(key)
+    const dev = r.devise
+    if (!slot[dev]) slot[dev] = { in: 0, out: 0, solde: 0 }
+    if (r.type === 'VERSEMENT') slot[dev].in += Number(r.s||0)/100
+    else slot[dev].out += Number(r.s||0)/100
+    slot[dev].solde = (slot[dev].in - slot[dev].out)
+  }
+  res.json(Array.from(map.values()))
+})
+
+// /kpi/split-approved
+app.get('/kpi/split-approved', auth, async (_req, res) => {
+  const rows = await prisma.operation.groupBy({
+    by: ['devise','type'],
+    where: { statut:'APPROUVE' },
+    _sum: { montantCents:true }
+  })
+  res.json(rows.map(r => ({
+    devise: r.devise, type: r.type, total: Number(r._sum.montantCents||0)/100
+  })))
+})
+
+// /kpi/top-benef?limit=10
+app.get('/kpi/top-benef', auth, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit||'10',10), 50)
+  const rows = await prisma.$queryRaw`
+    SELECT benef as name, devise, SUM(montantCents) as totalCents
+    FROM Operation
+    WHERE type='RETRAIT' AND statut='APPROUVE' AND benef IS NOT NULL
+    GROUP BY benef, devise
+    ORDER BY totalCents DESC
+    LIMIT ${limit}
+  `
+  res.json(rows.map(r => ({ name: r.name, devise: r.devise, total: Number(r.totalCents||0)/100 })))
+})
+
 
 const PORT = process.env.PORT || 4000
 app.listen(PORT, () => console.log(`API on http://localhost:${PORT}`))
