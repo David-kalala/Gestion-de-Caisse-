@@ -1,5 +1,6 @@
 <template>
   <div class="grid grid-2">
+    <!-- Formulaire + Ticket -->
     <div class="card">
       <h2>{{ editingId ? 'Modifier un versement' : 'Enregistrer un versement' }}</h2>
 
@@ -32,8 +33,10 @@
           <div>
             <label>Mode de paiement</label>
             <select v-model="form.mode">
-              <option>Espèces</option><option>Virement</option>
-              <option>Chèque</option><option>Mobile Money</option>
+              <option>Espèces</option>
+              <option>Virement</option>
+              <option>Chèque</option>
+              <option>Mobile Money</option>
             </select>
           </div>
           <div>
@@ -63,8 +66,28 @@
       <Ticket :data="ticket" :fmt="(n)=>store.fmtUnit(n)" />
     </div>
 
+    <!-- Mes versements (paginés) -->
     <div class="card">
-      <h3>Mes versements</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <h3>Mes versements</h3>
+       <div style="display:flex;gap:8px;align-items:center">
+          <input
+            v-model="q"
+            placeholder="Recherche (réf / motif / payeur)…"
+            @keyup.enter="page=1; loadList()"
+            style="min-width:260px"
+          >
+          <label>
+            Taille page
+            <select v-model.number="pageSize" @change="page=1; loadList()">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       <div class="table">
         <table>
           <thead>
@@ -74,7 +97,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="v in store.versements" :key="v.id">
+            <tr v-for="v in items" :key="v.id">
               <td>{{ v.reference || v.id }}</td>
               <td>
                 {{ v.date }}
@@ -104,6 +127,14 @@
           </tbody>
         </table>
       </div>
+      <p class="muted" style="margin-top:8px">
+        Page {{ page }} / {{ Math.max(1, Math.ceil(total/pageSize)) }}
+      </p>
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary" :disabled="page<=1" @click="page--; loadList()">Précédent</button>
+        <button class="btn secondary" :disabled="page>=Math.ceil(total/pageSize)" @click="page++; loadList()">Suivant</button>
+        <button class="btn" style="margin-left:auto" @click="loadList()">Actualiser</button>
+      </div>
     </div>
   </div>
 </template>
@@ -111,28 +142,52 @@
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { useCashStore } from '../stores/cashStore'
+import { api } from '../lib/api'
 import Ticket from '../components/Ticket.vue'
+import { useDebouncedWatch } from '../lib/useDebouncedWatch'
 
 const store = useCashStore()
 const editingId = ref(null)
 
+// Form UI en unités
 const form = reactive({
-  // UI en unités, STORE/transport en centimes
   montant: 500000,
   devise: 'CDF',
   motif: 'Taxe d’importation',
   payeur: 'Société X',
   mode: 'Espèces',
-  date: store.today()
+  date: (new Date()).toISOString().slice(0,10)
 })
 
+// Ticket
 const ticket = reactive({})
 
-async function submit  () {
+// Pagination (mes versements)
+const items = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(10)
+const q = ref('') // recherche texte
+
+async function loadList () {
+  const params = new URLSearchParams({
+    type: 'VERSEMENT',
+    createdBy: 'me',
+    page: String(page.value),
+    pageSize: String(pageSize.value),
+    sortBy: 'createdAt',
+    order: 'desc'
+  })
+  if (q.value) params.set('q', q.value)
+  const data = await api.get('/ops/search?' + params.toString())
+  items.value = data.items
+  total.value = data.total
+}
+
+async function submit () {
   if (editingId.value) {
     try {
       const montantCents = store.toCents(form.montant)
-      // Ne pas envoyer 'date' pour éviter toute modification côté serveur
       await store.updateVersement(editingId.value, {
         montantCents,
         devise: form.devise,
@@ -140,7 +195,8 @@ async function submit  () {
         payeur: form.payeur,
         mode: form.mode
       })
-      const row = store.versements.find(x => x.id === editingId.value)
+      await loadList()
+      const row = items.value.find(x => x.id === editingId.value)
       Object.assign(ticket, { id: (row?.reference || editingId.value), ...form, statut: 'SOUMIS' })
       alert('Versement modifié.')
       editingId.value = null
@@ -154,9 +210,10 @@ async function submit  () {
       motif: form.motif,
       payeur: form.payeur,
       mode: form.mode,
-      date: store.today()
+      date: form.date
     }
     const o = await store.addVersement(payload)
+    await loadList()
     Object.assign(ticket, { ...form, id: (o.reference || o.id), statut: 'SOUMIS' })
     alert('Versement soumis.')
     reset()
@@ -176,13 +233,14 @@ function edit (v) {
   })
 }
 
-function cancelEditing () {
+async function cancelEditing () {
   const id = editingId.value
-  const row = store.versements.find(x => x.id === id)
+  const row = items.value.find(x => x.id === id)
   if (!row) return
   if (!confirm(`Annuler le versement ${row.reference || row.id} ?`)) return
   try {
-    store.cancelVersement(row.id)
+    await store.cancelVersement(row.id)
+    await loadList()
     editingId.value = null
     reset()
     alert('Versement annulé.')
@@ -195,13 +253,19 @@ function reset () {
   form.motif = 'Taxe d’importation'
   form.payeur = 'Société X'
   form.mode = 'Espèces'
-  form.date = store.today()
+  form.date = (new Date()).toISOString().slice(0,10)
   editingId.value = null
 }
 
 onMounted(async () => {
   try {
-    await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
+    await Promise.all([
+      store.loadHistory(),
+      store.loadKpis(),
+      loadList()
+    ])
   } catch (e) { console.error(e) }
 })
+// Recherche debounced sur q
+useDebouncedWatch(q, () => { page.value = 1; loadList() }, 300)
 </script>

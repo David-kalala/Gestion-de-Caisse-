@@ -7,8 +7,11 @@ import PendingApprovalView from './views/auth/PendingApprovalView.vue'
 import ForbiddenView from './views/auth/ForbiddenView.vue'
 import PercepteurView from './views/PercepteurView.vue'
 import ComptableView from './views/ComptableView.vue'
-import ManagerView from './views/ManagerView.vue'
 import AdminView from './views/admin/AdminView.vue'
+import ManagerDashboard from './views/manager/ManagerDashboard.vue'
+import ManagerLayout from './views/manager/ManagerLayout.vue'
+import ManagerApprovals from './views/manager/ManagerApprovals.vue'
+import ManagerHistory from './views/manager/ManagerHistory.vue'
 
 
 const routes = [
@@ -20,10 +23,20 @@ const routes = [
 
 { name: 'percepteur', path: '/percepteur', component: PercepteurView, meta:{ requiresAuth:true, roles:['PERCEPTEUR'] } },
 { name: 'comptable', path: '/comptable', component: ComptableView, meta:{ requiresAuth:true, roles:['COMPTABLE'] } },
-{ name: 'manager', path: '/manager', component: ManagerView, meta:{ requiresAuth:true, roles:['MANAGER'] } },
+
 
 
 { name: 'admin', path: '/admin', component: AdminView, meta:{ requiresAuth:true, roles:['ADMIN'] } },
+
+{ path: '/manager',
+  component: ManagerLayout,
+  meta:{ requiresAuth:true, roles:['MANAGER'] },
+  children: [
+    { name: 'manager-dashboard', path: '', component: ManagerDashboard },
+    { name: 'manager-approvals', path: 'approvals', component: ManagerApprovals },
+    { name: 'manager-history', path: 'history', component: ManagerHistory }
+  ]
+},
 ]
 
 
@@ -38,7 +51,7 @@ const auth = useAuthStore()
 if(['login','signup'].includes(to.name)){
 // si déjà connecté et approuvé -> rediriger vers page rôle
 if(auth.isAuthenticated && auth.isApproved){
-const map = { ADMIN:'admin', PERCEPTEUR:'percepteur', COMPTABLE:'comptable', MANAGER:'manager' }
+const map = { ADMIN:'admin', PERCEPTEUR:'percepteur', COMPTABLE:'comptable', MANAGER:'manager-dashboard' }
 return { name: map[auth.role] || 'percepteur' }
 }
 return true
