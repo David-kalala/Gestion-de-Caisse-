@@ -153,7 +153,12 @@ app.get('/admin/audit', auth, adminOnly, async (_req, res) => {
     payload: a.payload
   })))
 })
-
+async function getSoldeCents(devise, tx = prisma) {
+  const inSum  = await tx.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'VERSEMENT', devise } })
+  const outSum = await tx.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'RETRAIT',   devise } })
+  const i = Number(inSum._sum.montantCents || 0), o = Number(outSum._sum.montantCents || 0)
+  return i - o
+}
 // ---------- créer opération
 app.post('/operations', auth, async (req, res) => {
   try {
@@ -165,6 +170,15 @@ app.post('/operations', auth, async (req, res) => {
     const reference =
       type === 'RETRAIT' ? await generateUniqueRef('RET') :
       type === 'VERSEMENT' ? await generateUniqueRef('VER') : null
+
+      //  blocage dès la création si solde approuvé insuffisant
+    if (type === 'RETRAIT') {
+      const amountCents = cents(montant)
+      const solde = await getSoldeCents(devise)
+      if (amountCents > solde) {
+        return res.status(400).json({ error: `Solde insuffisant en ${devise}. Disponible: ${money(solde)} ${devise}` })
+      }
+    }
 
     const o = await prisma.operation.create({
       data: {
@@ -252,19 +266,35 @@ app.post('/operations/:id/decide', auth, async (req, res) => {
   if (!allowed.includes(decision)) {
     return res.status(400).json({ error: 'decision invalide' })
   }
-  const o = await prisma.operation.findUnique({ where: { id } })
-  if (!o) return res.status(404).json({ error: 'Not found' })
-  if (o.statut !== 'SOUMIS') {
-    return res.status(400).json({ error: 'Déjà traitée / non éligible' })
+  try {
+     const updated = await prisma.$transaction(async (tx) => {
+       const o = await tx.operation.findUnique({ where: { id } })
+       if (!o) throw new Error('Not found')
+       if (o.statut !== 'SOUMIS') throw new Error('Déjà traitée / non éligible')
+ 
+       // Garde-fou solde au moment de l’approbation d’un RETRAIT
+       if (decision === 'APPROUVE' && o.type === 'RETRAIT') {
+         const solde = await getSoldeCents(o.devise, tx)
+         if (Number(o.montantCents) > solde) {
+           // message clair avec devises/valeurs
+           throw new Error(`Solde insuffisant en ${o.devise}. Disponible: ${money(solde)} ${o.devise}`)
+         }
+       }
+       const up = await tx.operation.update({ where: { id }, data: { statut: decision } })
+       await tx.history.create({
+         data: { action: `DECIDE_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId: req.user.id, meta: { statut: decision } }
+       })
+       return up
+     })
+     res.json(updated)
+   } catch (e) {
+     const msg = e?.message || 'Erreur décision'
+     const code = /Solde insuffisant/.test(msg) ? 400 : 400
+     res.status(code).json({ error: msg })
   }
-  const updated = await prisma.operation.update({ where: { id }, data: { statut: decision } })
-  await prisma.history.create({
-    data: { action: `DECIDE_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId: req.user.id, meta: { statut: decision } }
-  })
-  res.json(updated)
 })
 
-// ---------- listes
+// ---------- listes (legacy pour les écrans existants)
 app.get('/operations', auth, async (req, res) => {
   const { statut, type } = req.query
   const ops = await prisma.operation.findMany({
@@ -274,9 +304,72 @@ app.get('/operations', auth, async (req, res) => {
   res.json(ops.map(o => ({
     ...o,
     date: o.dateValeur.toISOString().slice(0, 10), // alias pour le front
-    montant: money(o.montantCents)
+    montant: Number(o.montantCents) / 100
   })))
 })
+
+// ---------- recherche paginée + filtres avancés (pour Dashboard Manager)
+app.get('/ops/search', auth, async (req, res) => {
+  const {
+    statut, type, devise, q,
+    dateFrom, dateTo,
+    min, max,         // montants en unités
+    sortBy = 'createdAt', order = 'desc',
+    page = '1', pageSize = '20',
+    createdBy, createdById
+  } = req.query
+  // createdBy: 'me' ou createdById: <uuid>
+  const creator =
+    createdBy === 'me' ? req.user.id :
+    (createdById ? String(createdById) : null)
+
+  const where = {
+    ...(statut ? { statut } : {}),
+    ...(type ? { type } : {}),
+    ...(devise ? { devise } : {}),
+    ...(creator ? { createdById: creator } : {}),
+    ...(dateFrom ? { dateValeur: { gte: new Date(dateFrom) } } : {}),
+    ...(dateTo   ? { dateValeur: { lte: new Date(dateTo) } } : {}),
+    ...(min != null || max != null ? {
+      montantCents: {
+        ...(min != null ? { gte: Math.round(Number(min)*100) } : {}),
+        ...(max != null ? { lte: Math.round(Number(max)*100) } : {})
+      }
+    } : {}),
+    ...(q ? {
+      OR: [
+        { reference: { contains: q, mode: 'insensitive' } },
+        { payeur:    { contains: q, mode: 'insensitive' } },
+        { motif:     { contains: q, mode: 'insensitive' } },
+        { benef:     { contains: q, mode: 'insensitive' } },
+        { objet:     { contains: q, mode: 'insensitive' } }
+      ]
+    } : {})
+  }
+
+  const take = Math.min(Math.max(parseInt(pageSize,10) || 20, 1), 200)
+  const skip = (Math.max(parseInt(page,10) || 1, 1) - 1) * take
+
+  const [total, items] = await Promise.all([
+    prisma.operation.count({ where }),
+    prisma.operation.findMany({
+      where,
+      orderBy: { [sortBy]: order.toLowerCase() === 'asc' ? 'asc' : 'desc' },
+      skip, take
+    })
+  ])
+
+  res.json({
+    total, page: Number(page), pageSize: take,
+    items: items.map(o => ({
+      ...o,
+      date: o.dateValeur.toISOString().slice(0,10),
+      montant: Number(o.montantCents)/100
+    }))
+  })
+})
+
+
 
 // ---------- history (protégé)
 app.get('/history', auth, async (_req, res) => {
@@ -297,6 +390,54 @@ app.get('/history', auth, async (_req, res) => {
     meta: h.meta
   })))
 })
+ // /history/search?kind=VERSEMENT|RETRAIT (ou vide pour tous) &page=1&pageSize=20
+ app.get('/history/search', auth, async (req, res) => {
+  const { kind = '', page = '1', pageSize = '20', q = '' } = req.query
+  const where = {
+    ...(kind === 'VERSEMENT' ? { action: { contains: 'VERSEMENT' } } : {}),
+    ...(kind === 'RETRAIT'   ? { action: { contains: 'RETRAIT'   } } : {}),
+    ...(q ? {
+      OR: [
+        // motif stocké directement sur History
+        { motif: { contains: q, mode: 'insensitive' } },
+        // champs de l'opération liée (réf lisible, payeur, bénéficiaire, motif/objet)
+        { ref: { is: { reference: { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { payeur:    { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { benef:     { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { motif:     { contains: q, mode: 'insensitive' } } } },
+        { ref: { is: { objet:     { contains: q, mode: 'insensitive' } } } }
+      ]
+    } : {})
+  }
+   const take = Math.min(Math.max(parseInt(pageSize,10) || 20, 1), 200)
+   const skip = (Math.max(parseInt(page,10) || 1, 1) - 1) * take
+   const [total, rows] = await Promise.all([
+   prisma.history.count({ where }),
+    prisma.history.findMany({
+      where,
+      orderBy: { ts: 'desc' },
+      skip, take,
+      include: { actor: true, ref: true } // <-- on récupère l'Operation liée
+    }),  
+   ])
+   const money = c => Number(c) / 100
+   res.json({
+     total, page: Number(page), pageSize: take,
+     items: rows.map(h => ({
+       id: h.id,
+       ts: h.ts,
+       actor: h.actor?.email || h.actorId,
+       action: h.action,
+       ref: h.refId,
+       // Affiche la référence lisible si présente, sinon l'UUID
+      ref: h.ref?.reference || h.refId,
+       devise: h.devise,
+       montant: h.montantCents != null ? money(h.montantCents) : null,
+       motif: h.motif,
+       meta: h.meta
+     }))
+   })
+ })
 
 // ---------- KPI
 app.get('/kpi/totals', auth, async (_req, res) => {
@@ -327,6 +468,63 @@ app.get('/kpi/totals-by-currency', auth, async (_req, res) => {
   })
   res.json(map)
 })
+
+// /kpi/daily?days=90&devise=CDF,USD
+app.get('/kpi/daily', auth, async (req, res) => {
+  const days = Math.max(1, Math.min(parseInt(req.query.days||'90',10), 365))
+  const devises = (req.query.devise || 'CDF,USD').split(',').map(s=>s.trim().toUpperCase())
+
+  const since = new Date(Date.now() - days*86400000)
+  // SQLite: GROUP BY DATE()
+  const rows = await prisma.$queryRaw`
+    SELECT DATE(dateValeur) as d, type, devise, SUM(montantCents) as s
+    FROM Operation
+    WHERE statut='APPROUVE' AND dateValeur >= ${since.toISOString()}
+      AND devise IN (${prisma.join(devises)})
+    GROUP BY d, type, devise
+    ORDER BY d ASC
+  `
+  // structure { date, CDF:{in,out}, USD:{in,out} }
+  const map = new Map()
+  for (const r of rows) {
+    const key = r.d
+    if (!map.has(key)) map.set(key, { date: key })
+    const slot = map.get(key)
+    const dev = r.devise
+    if (!slot[dev]) slot[dev] = { in: 0, out: 0, solde: 0 }
+    if (r.type === 'VERSEMENT') slot[dev].in += Number(r.s||0)/100
+    else slot[dev].out += Number(r.s||0)/100
+    slot[dev].solde = (slot[dev].in - slot[dev].out)
+  }
+  res.json(Array.from(map.values()))
+})
+
+// /kpi/split-approved
+app.get('/kpi/split-approved', auth, async (_req, res) => {
+  const rows = await prisma.operation.groupBy({
+    by: ['devise','type'],
+    where: { statut:'APPROUVE' },
+    _sum: { montantCents:true }
+  })
+  res.json(rows.map(r => ({
+    devise: r.devise, type: r.type, total: Number(r._sum.montantCents||0)/100
+  })))
+})
+
+// /kpi/top-benef?limit=10
+app.get('/kpi/top-benef', auth, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit||'10',10), 50)
+  const rows = await prisma.$queryRaw`
+    SELECT benef as name, devise, SUM(montantCents) as totalCents
+    FROM Operation
+    WHERE type='RETRAIT' AND statut='APPROUVE' AND benef IS NOT NULL
+    GROUP BY benef, devise
+    ORDER BY totalCents DESC
+    LIMIT ${limit}
+  `
+  res.json(rows.map(r => ({ name: r.name, devise: r.devise, total: Number(r.totalCents||0)/100 })))
+})
+
 
 const PORT = process.env.PORT || 4000
 app.listen(PORT, () => console.log(`API on http://localhost:${PORT}`))
