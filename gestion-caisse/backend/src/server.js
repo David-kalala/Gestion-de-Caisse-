@@ -153,7 +153,12 @@ app.get('/admin/audit', auth, adminOnly, async (_req, res) => {
     payload: a.payload
   })))
 })
-
+async function getSoldeCents(devise, tx = prisma) {
+  const inSum  = await tx.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'VERSEMENT', devise } })
+  const outSum = await tx.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'RETRAIT',   devise } })
+  const i = Number(inSum._sum.montantCents || 0), o = Number(outSum._sum.montantCents || 0)
+  return i - o
+}
 // ---------- créer opération
 app.post('/operations', auth, async (req, res) => {
   try {
@@ -165,6 +170,15 @@ app.post('/operations', auth, async (req, res) => {
     const reference =
       type === 'RETRAIT' ? await generateUniqueRef('RET') :
       type === 'VERSEMENT' ? await generateUniqueRef('VER') : null
+
+      //  blocage dès la création si solde approuvé insuffisant
+    if (type === 'RETRAIT') {
+      const amountCents = cents(montant)
+      const solde = await getSoldeCents(devise)
+      if (amountCents > solde) {
+        return res.status(400).json({ error: `Solde insuffisant en ${devise}. Disponible: ${money(solde)} ${devise}` })
+      }
+    }
 
     const o = await prisma.operation.create({
       data: {
@@ -252,16 +266,32 @@ app.post('/operations/:id/decide', auth, async (req, res) => {
   if (!allowed.includes(decision)) {
     return res.status(400).json({ error: 'decision invalide' })
   }
-  const o = await prisma.operation.findUnique({ where: { id } })
-  if (!o) return res.status(404).json({ error: 'Not found' })
-  if (o.statut !== 'SOUMIS') {
-    return res.status(400).json({ error: 'Déjà traitée / non éligible' })
+  try {
+     const updated = await prisma.$transaction(async (tx) => {
+       const o = await tx.operation.findUnique({ where: { id } })
+       if (!o) throw new Error('Not found')
+       if (o.statut !== 'SOUMIS') throw new Error('Déjà traitée / non éligible')
+ 
+       // Garde-fou solde au moment de l’approbation d’un RETRAIT
+       if (decision === 'APPROUVE' && o.type === 'RETRAIT') {
+         const solde = await getSoldeCents(o.devise, tx)
+         if (Number(o.montantCents) > solde) {
+           // message clair avec devises/valeurs
+           throw new Error(`Solde insuffisant en ${o.devise}. Disponible: ${money(solde)} ${o.devise}`)
+         }
+       }
+       const up = await tx.operation.update({ where: { id }, data: { statut: decision } })
+       await tx.history.create({
+         data: { action: `DECIDE_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId: req.user.id, meta: { statut: decision } }
+       })
+       return up
+     })
+     res.json(updated)
+   } catch (e) {
+     const msg = e?.message || 'Erreur décision'
+     const code = /Solde insuffisant/.test(msg) ? 400 : 400
+     res.status(code).json({ error: msg })
   }
-  const updated = await prisma.operation.update({ where: { id }, data: { statut: decision } })
-  await prisma.history.create({
-    data: { action: `DECIDE_${o.type}`, refId: id, devise: o.devise, montantCents: o.montantCents, motif: o.motif ?? o.objet, actorId: req.user.id, meta: { statut: decision } }
-  })
-  res.json(updated)
 })
 
 // ---------- listes (legacy pour les écrans existants)

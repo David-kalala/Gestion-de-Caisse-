@@ -3,7 +3,7 @@
 <nav class="nav">
 <RouterLink v-if="auth.role==='PERCEPTEUR'" to="/percepteur" :class="{active: $route.name==='percepteur'}">Percepteur</RouterLink>
 <RouterLink v-if="auth.role==='COMPTABLE'" to="/comptable" :class="{active: $route.name==='comptable'}">Comptable</RouterLink>
-<RouterLink v-if="auth.role==='MANAGER'" to="/manager" :class="{active: $route.name==='manager'}">Manager</RouterLink>
+<RouterLink v-if="auth.role==='MANAGER'" to="/manager" :class="{active: $route.path.startsWith('/manager')}">Manager</RouterLink>
 <RouterLink v-if="auth.role==='ADMIN'" to="/admin" :class="{active: $route.name==='admin'}">Admin</RouterLink>
 <span style="flex:1"></span>
 <template v-if="auth.isAuthenticated">

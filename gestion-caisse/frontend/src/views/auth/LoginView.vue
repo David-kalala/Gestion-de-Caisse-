@@ -27,7 +27,7 @@ async function login(){
 try{
 await auth.login({email: email.value, password: password.value})
 if(!auth.isApproved) return router.push({ name:'pending' })
-const map = { ADMIN:'admin', PERCEPTEUR:'percepteur', COMPTABLE:'comptable', MANAGER:'manager' }
+const map = { ADMIN:'admin', PERCEPTEUR:'percepteur', COMPTABLE:'comptable', MANAGER:'manager-dashboard' }
 const dest = route.query.redirect || { name: map[auth.role] || 'percepteur' }
 router.push(dest)
 }catch(e){ alert(e.message) }

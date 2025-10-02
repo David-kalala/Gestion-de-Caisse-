@@ -17,7 +17,7 @@
     try {
       await auth.me()
       if (auth.isApproved) {
-        const map = { ADMIN:'admin', PERCEPTEUR:'percepteur', COMPTABLE:'comptable', MANAGER:'manager' }
+        const map = { ADMIN:'admin', PERCEPTEUR:'percepteur', COMPTABLE:'comptable', MANAGER:'manager-dashboard' }
         router.push({ name: map[auth.role] || 'percepteur' })
       } else {
         alert('Toujours en attente...')
