@@ -59,7 +59,7 @@
           <tbody>
             <tr v-for="a in audit" :key="a.id">
               <td>{{ new Date(a.ts).toLocaleString() }}</td>
-              <td>{{ a.admin || '—' }}</td>
+              <td>{{ a.actor || '—' }}</td>
               <td>{{ a.action }}</td>
               <td class="muted">{{ a.payload && JSON.stringify(a.payload) }}</td>
             </tr>

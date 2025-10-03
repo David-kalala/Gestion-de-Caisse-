@@ -444,9 +444,8 @@ app.get('/history', auth, async (_req, res) => {
        ts: h.ts,
        actor: h.actor?.email || h.actorId,
        action: h.action,
-       ref: h.refId,
        // Affiche la référence lisible si présente, sinon l'UUID
-      ref: h.ref?.reference || h.refId,
+       ref: h.ref?.reference || h.refId,
        devise: h.devise,
        montant: h.montantCents != null ? money(h.montantCents) : null,
        motif: h.motif,

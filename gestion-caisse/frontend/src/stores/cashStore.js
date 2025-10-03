@@ -41,24 +41,68 @@ export const useCashStore = defineStore('cash', {
     },
     async loadHistory(){ this.history = await api.get('/history') },
     async loadKpis(){
-      this.kpis = await api.get('/kpi/totals')
-      this.kpisByDev = await api.get('/kpi/totals-by-currency')
+       // On se base sur /kpi/summary (déjà présent côté backend)
+       const summary = await api.get('/kpi/summary')
+       // Photo globale : on prend le YTD pour alimenter les cartes du haut
+       this.kpis = summary?.ytd || { inSum: 0, outSum: 0, solde: 0 }
+ 
+       // Totaux par devise (calculés côté client via /ops/search paginé)
+       this.kpisByDev = {}
+       for (const dev of ['CDF','USD']) {
+         const agg = await this._sumApprovedByDevise(dev)
+         if (agg.inSum || agg.outSum) this.kpisByDev[dev] = agg
+       }
+     },
+ 
+     async _sumApprovedByDevise(devise){
+       let page = 1, pageSize = 200, inSum = 0, outSum = 0, total = 0
+       while (true) {
+         const params = new URLSearchParams({
+           statut: 'APPROUVE', devise, page: String(page), pageSize: String(pageSize)
+         })
+         const data = await api.get('/ops/search?' + params.toString())
+        total = data.total
+        for (const o of data.items) {
+          if (o.type === 'VERSEMENT') inSum += Number(o.montant)
+          else if (o.type === 'RETRAIT') outSum += Number(o.montant)
+        }
+        if (page * pageSize >= total) break
+        page++
+      }
+      const solde = Math.round((inSum - outSum) * 100) / 100
+      return { inSum, outSum, solde }
     },
 
     // ------- KPI Manager (nouveau)
     async loadManagerKpis(){
-      const [summary, daily, waterfall, modes] = await Promise.all([
+      const [summary, daily] = await Promise.all([
         api.get('/kpi/summary'),
-        api.get('/kpi/daily?days=90'),
-        api.get('/kpi/waterfall'),
-        api.get('/kpi/modes-mtd')
+        api.get('/kpi/daily?days=90')
       ])
       this.kpiSummary   = summary
       this.kpiDaily     = daily
-      this.kpiWaterfall = waterfall
-      this.kpiModesMtd  = modes
+      this.kpiWaterfall = this._computeWaterfallFromDaily(daily) // estimation côté client
+      this.kpiModesMtd  = [] // section allégée tant qu'il n'y a pas d'endpoint dédié
     },
 
+    _computeWaterfallFromDaily(daily){
+      if (!Array.isArray(daily) || !daily.length) return null
+      const now = new Date()
+      const month = now.toISOString().slice(0,7) // YYYY-MM
+      const monthStart = month + '-01'
+      const i0 = daily.findIndex(d => d.date >= monthStart)
+      const opening = i0 > 0 && daily[i0-1]?.cum != null ? Number(daily[i0-1].cum) : 0
+      const inSum  = daily.slice(Math.max(i0,0)).reduce((a,b)=>a+(b.in||0), 0)
+      const outSum = daily.slice(Math.max(i0,0)).reduce((a,b)=>a+(b.out||0), 0)
+      const closing = Math.round((opening + inSum - outSum) * 100) / 100
+      return {
+        month,
+        opening: Math.round(opening * 100) / 100,
+        in: Math.round(inSum * 100) / 100,
+        out: Math.round(outSum * 100) / 100,
+        closing
+      }
+    },
     // ------- mutations via API
     async addVersement({ montantCents, devise, motif, payeur, mode, date }){
       const auth = useAuthStore()
