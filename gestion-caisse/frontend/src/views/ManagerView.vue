@@ -1,5 +1,109 @@
 <template>
   <div class="grid">
+
+    <!-- KPIs haut de page -->
+    <div class="card">
+      <h2>Tableau de bord — Manager</h2>
+      <div class="kpis" style="margin-top:10px">
+        <div class="kpi">
+          <div class="muted">Solde actuel (toutes devises)</div>
+          <strong>{{ store.fmtUnit(store.kpis.solde) }}</strong>
+          <div class="muted" style="font-size:12px">
+            Entrées: {{ store.fmtUnit(store.kpis.inSum) }} · Sorties: {{ store.fmtUnit(store.kpis.outSum) }}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="muted">Δ vs Hier (solde)</div>
+          <strong :style="{ color: (sum.deltaVsYesterday?.solde || 0) >= 0 ? '#16a34a' : '#dc2626' }">
+            {{ signed(sum.deltaVsYesterday?.solde || 0) }}
+          </strong>
+          <div class="muted" style="font-size:12px">
+            In: {{ signed(sum.deltaVsYesterday?.in || 0) }} · Out: {{ signed(sum.deltaVsYesterday?.out || 0) }}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="muted">Encaissements — Aujourd’hui</div>
+          <strong>{{ store.fmtUnit(sum.today?.inSum || 0) }}</strong>
+          <div class="muted" style="font-size:12px">
+            Sorties: {{ store.fmtUnit(sum.today?.outSum || 0) }}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="muted">Encaissements — Mois (MTD)</div>
+          <strong>{{ store.fmtUnit(sum.mtd?.inSum || 0) }}</strong>
+          <div class="muted" style="font-size:12px">
+            Sorties: {{ store.fmtUnit(sum.mtd?.outSum || 0) }}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="muted">Encaissements — Année (YTD)</div>
+          <strong>{{ store.fmtUnit(sum.ytd?.inSum || 0) }}</strong>
+          <div class="muted" style="font-size:12px">
+            Sorties: {{ store.fmtUnit(sum.ytd?.outSum || 0) }}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="muted">Paiements électroniques (MTD)</div>
+          <strong>{{ (sum.pctElectronicMTD || 0).toFixed(1) }}%</strong>
+          <div class="muted" style="font-size:12px">
+            Virement / Mobile Money / RTGS / Carte
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Courbe solde quotidien 90j -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <h3>Solde quotidien — 90 derniers jours (cumul)</h3>
+        <small class="muted">Astuce: approuver/ajuster des opérations actualise la courbe</small>
+      </div>
+      <Sparkline :data="dailyCum" :height="80" />
+    </div>
+
+    <!-- Waterfall mois courant -->
+    <div class="card">
+      <h3>Variation du solde — {{ waterfall?.month || '—' }}</h3>
+      <div class="kpis" style="margin-top:10px">
+        <div class="kpi">
+          <div class="muted">Ouverture</div>
+          <strong>{{ store.fmtUnit(waterfall?.opening || 0) }}</strong>
+        </div>
+        <div class="kpi">
+          <div class="muted">Entrées (MTD)</div>
+          <strong>{{ store.fmtUnit(waterfall?.in || 0) }}</strong>
+        </div>
+        <div class="kpi">
+          <div class="muted">Sorties (MTD)</div>
+          <strong>{{ store.fmtUnit(waterfall?.out || 0) }}</strong>
+        </div>
+        <div class="kpi">
+          <div class="muted">Clôture (estimée)</div>
+          <strong>{{ store.fmtUnit(waterfall?.closing || 0) }}</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modes de paiement (MTD) -->
+    <div class="card">
+      <h3>Répartition des modes de paiement (MTD)</h3>
+      <div class="table" v-if="store.kpiModesMtd.length">
+        <table>
+          <thead>
+            <tr><th>Mode</th><th>Montant</th><th>Part</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in store.kpiModesMtd" :key="m.mode">
+              <td>{{ m.mode }}</td>
+              <td>{{ store.fmtUnit(m.amount) }}</td>
+              <td>{{ m.pct.toFixed(1) }}%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="muted">Aucune donnée approuvée.</p>
+    </div>
+
     <!-- Deux colonnes : Versements en attente / Retraits en attente -->
     <div class="grid grid-2">
       <!-- Versements -->
@@ -124,6 +228,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useCashStore } from '../stores/cashStore'
+import Sparkline from '../components/Sparkline.vue'
 
 const store = useCashStore()
 const selectedV = ref([])
@@ -141,6 +246,13 @@ function decide (decision) {
 const versementsPending = computed(() => store.versements.filter(v => v.statut === 'SOUMIS'))
 const retraitsPending   = computed(() => store.retraits.filter(r => r.statut === 'SOUMIS'))
 
+/** KPI summary helpers */
+const sum = computed(() => store.kpiSummary || { today:{}, mtd:{}, ytd:{}, deltaVsYesterday:{}, pctElectronicMTD:0 })
+const signed = (n) => (n >= 0 ? `+${store.fmtUnit(n)}` : `-${store.fmtUnit(Math.abs(n))}`)
+
+/** Série cumulée pour sparkline */
+const dailyCum = computed(() => (store.kpiDaily || []).map(x => x.cum))
+
 /** Liste des devises présentes dans les totaux (approuvés) */
 const currencies = computed(() => Object.keys(store.kpisByDev || {}))
 
@@ -153,9 +265,16 @@ watch(currencies, (list) => {
 /** Totaux de la devise sélectionnée */
 const totalsDev = computed(() => devise.value ? store.kpisByDev[devise.value] : null)
 
+const waterfall = computed(() => store.kpiWaterfall || null)
+
 onMounted(async () => {
   try {
-    await Promise.all([store.loadOperations(), store.loadHistory(), store.loadKpis()])
+    await Promise.all([
+      store.loadOperations(),
+      store.loadHistory(),
+      store.loadKpis(),
+      store.loadManagerKpis() // charge summary, daily, waterfall, modes
+    ])
   } catch (e) { console.error(e) }
 })
 </script>

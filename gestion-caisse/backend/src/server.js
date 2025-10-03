@@ -56,6 +56,22 @@ async function generateUniqueRef(prefix = 'VER') {
   }
 }
 
+// ---------- utils dates (KPI)
+function startOfDay(d){ const x = new Date(d); x.setHours(0,0,0,0); return x }
+function endOfDay(d){ const x = new Date(d); x.setHours(23,59,59,999); return x }
+function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate() + n); return x }
+function startOfMonth(d){ return startOfDay(new Date(d.getFullYear(), d.getMonth(), 1)) }
+function startOfYear(d){ return startOfDay(new Date(d.getFullYear(), 0, 1)) }
+function toISODate(d){ return new Date(d).toISOString().slice(0,10) }
+
+
+async function sumBy(where){
+const inAgg = await prisma.operation.aggregate({ _sum: { montantCents: true }, where: { ...where, statut: 'APPROUVE', type: 'VERSEMENT' } })
+const outAgg = await prisma.operation.aggregate({ _sum: { montantCents: true }, where: { ...where, statut: 'APPROUVE', type: 'RETRAIT' } })
+const i = inAgg._sum.montantCents || 0, o = outAgg._sum.montantCents || 0
+return { inSum: money(i), outSum: money(o), solde: money(i - o) }
+}
+
 // ---------- auth
 app.post('/auth/signup', async (req, res) => {
   try {
@@ -439,92 +455,77 @@ app.get('/history', auth, async (_req, res) => {
    })
  })
 
-// ---------- KPI
-app.get('/kpi/totals', auth, async (_req, res) => {
-  const inSum = await prisma.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'VERSEMENT' } })
-  const outSum = await prisma.operation.aggregate({ _sum: { montantCents: true }, where: { statut: 'APPROUVE', type: 'RETRAIT' } })
-  const i = inSum._sum.montantCents || 0, o = outSum._sum.montantCents || 0
-  res.json({ inSum: money(i), outSum: money(o), solde: money(i - o) })
+// ---------- KPI 
+// Résumé: Today / MTD / YTD + Δ vs hier + % électroniques MTD
+app.get('/kpi/summary', auth, async (_req, res) => {
+const now = new Date()
+const todayStart = startOfDay(now), todayEnd = endOfDay(now)
+const mStart = startOfMonth(now), yStart = startOfYear(now)
+const ystStart = startOfDay(addDays(now, -1)), ystEnd = endOfDay(addDays(now, -1))
+
+
+const today = await sumBy({ dateValeur: { gte: todayStart, lte: todayEnd } })
+const mtd = await sumBy({ dateValeur: { gte: mStart, lte: todayEnd } })
+const ytd = await sumBy({ dateValeur: { gte: yStart, lte: todayEnd } })
+const yest = await sumBy({ dateValeur: { gte: ystStart, lte: ystEnd } })
+
+
+// % paiements électroniques (modes considérés comme électroniques)
+const electronicModes = ['Virement','Mobile Money','RTGS','Carte']
+const mRows = await prisma.operation.findMany({
+where: { statut: 'APPROUVE', type: 'VERSEMENT', dateValeur: { gte: mStart, lte: todayEnd } },
+select: { mode: true, montantCents: true }
+})
+const totalM = mRows.reduce((a, r) => a + (r.montantCents || 0), 0)
+const electronic = mRows.filter(r => electronicModes.includes(r.mode || '')).reduce((a, r) => a + (r.montantCents || 0), 0)
+const pctElectronic = totalM ? Math.round((electronic / totalM) * 1000) / 10 : 0
+
+
+res.json({
+today,
+mtd,
+ytd,
+deltaVsYesterday: {
+in: Math.round((today.inSum - yest.inSum) * 100) / 100,
+out: Math.round((today.outSum - yest.outSum) * 100) / 100,
+solde: Math.round((today.solde - yest.solde) * 100) / 100
+},
+pctElectronicMTD: pctElectronic
+})
 })
 
-app.get('/kpi/totals-by-currency', auth, async (_req, res) => {
-  const approved = await prisma.operation.groupBy({
-    by: ['devise', 'type'],
-    where: { statut: 'APPROUVE' },
-    _sum: { montantCents: true }
-  })
-  const map = {}
-  approved.forEach(r => {
-    const dev = r.devise
-    map[dev] = map[dev] || { inSum: 0, outSum: 0, solde: 0 }
-    const val = (r._sum.montantCents || 0)
-    if (r.type === 'VERSEMENT') map[dev].inSum += val
-    else map[dev].outSum += val
-    map[dev].solde = map[dev].inSum - map[dev].outSum
-  })
-  // cents -> money
-  Object.keys(map).forEach(k => {
-    map[k] = { inSum: money(map[k].inSum), outSum: money(map[k].outSum), solde: money(map[k].solde) }
-  })
-  res.json(map)
-})
 
-// /kpi/daily?days=90&devise=CDF,USD
+// Série quotidienne (N derniers jours): in/out/net + cumul
 app.get('/kpi/daily', auth, async (req, res) => {
-  const days = Math.max(1, Math.min(parseInt(req.query.days||'90',10), 365))
-  const devises = (req.query.devise || 'CDF,USD').split(',').map(s=>s.trim().toUpperCase())
+const days = Math.min(365, Math.max(1, Number(req.query.days || 90)))
+const end = endOfDay(new Date())
+const start = startOfDay(addDays(end, -days + 1))
 
-  const since = new Date(Date.now() - days*86400000)
-  // SQLite: GROUP BY DATE()
-  const rows = await prisma.$queryRaw`
-    SELECT DATE(dateValeur) as d, type, devise, SUM(montantCents) as s
-    FROM Operation
-    WHERE statut='APPROUVE' AND dateValeur >= ${since.toISOString()}
-      AND devise IN (${prisma.join(devises)})
-    GROUP BY d, type, devise
-    ORDER BY d ASC
-  `
-  // structure { date, CDF:{in,out}, USD:{in,out} }
-  const map = new Map()
-  for (const r of rows) {
-    const key = r.d
-    if (!map.has(key)) map.set(key, { date: key })
-    const slot = map.get(key)
-    const dev = r.devise
-    if (!slot[dev]) slot[dev] = { in: 0, out: 0, solde: 0 }
-    if (r.type === 'VERSEMENT') slot[dev].in += Number(r.s||0)/100
-    else slot[dev].out += Number(r.s||0)/100
-    slot[dev].solde = (slot[dev].in - slot[dev].out)
-  }
-  res.json(Array.from(map.values()))
+
+const rows = await prisma.operation.findMany({
+where: { statut: 'APPROUVE', dateValeur: { gte: start, lte: end } },
+select: { dateValeur: true, type: true, montantCents: true },
+orderBy: { dateValeur: 'asc' }
 })
 
-// /kpi/split-approved
-app.get('/kpi/split-approved', auth, async (_req, res) => {
-  const rows = await prisma.operation.groupBy({
-    by: ['devise','type'],
-    where: { statut:'APPROUVE' },
-    _sum: { montantCents:true }
-  })
-  res.json(rows.map(r => ({
-    devise: r.devise, type: r.type, total: Number(r._sum.montantCents||0)/100
-  })))
-})
 
-// /kpi/top-benef?limit=10
-app.get('/kpi/top-benef', auth, async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit||'10',10), 50)
-  const rows = await prisma.$queryRaw`
-    SELECT benef as name, devise, SUM(montantCents) as totalCents
-    FROM Operation
-    WHERE type='RETRAIT' AND statut='APPROUVE' AND benef IS NOT NULL
-    GROUP BY benef, devise
-    ORDER BY totalCents DESC
-    LIMIT ${limit}
-  `
-  res.json(rows.map(r => ({ name: r.name, devise: r.devise, total: Number(r.totalCents||0)/100 })))
+const map = new Map()
+for (let i = 0; i < days; i++) {
+const d = toISODate(addDays(start, i))
+map.set(d, { date: d, in: 0, out: 0, net: 0 })
+}
+rows.forEach(r => {
+const key = toISODate(r.dateValeur)
+const b = map.get(key)
+if (!b) return
+if (r.type === 'VERSEMENT') b.in += money(r.montantCents || 0)
+else b.out += money(r.montantCents || 0)
+b.net = Math.round((b.in - b.out) * 100) / 100
 })
-
+let cum = 0
+const series = Array.from(map.values()).map(b => { cum += b.net; return { ...b, cum: Math.round(cum * 100) / 100 } })
+res.json(series)
+})
 
 const PORT = process.env.PORT || 4000
 app.listen(PORT, () => console.log(`API on http://localhost:${PORT}`))
